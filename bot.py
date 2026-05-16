@@ -1,9 +1,9 @@
 """
-╔══════════════════════════════════════════════════════╗
-║           CyberGuard Pro  —  Telegram Bot            ║
-║   Cloudflare Worker + Render  |  RAM Optimized       ║
-║   Concurrent users ✅  Group link scan ✅            ║
-╚══════════════════════════════════════════════════════╝
+╔══════════════════════════════════════════════════════════╗
+║            CyberGuard Pro  —  Telegram Bot               ║
+║  Render + Cloudflare Worker  |  RAM Optimized            ║
+║  Multi-API Rotation  |  Concurrent Users  |  Group Scan  ║
+╚══════════════════════════════════════════════════════════╝
 """
 
 import os, re, asyncio, base64, logging, socket, threading, time
@@ -12,38 +12,53 @@ from collections import defaultdict
 
 import httpx
 from flask import Flask, request, Response
-from telegram import Update, BotCommand, constants, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (
+    Update, BotCommand, constants,
+    InlineKeyboardButton, InlineKeyboardMarkup,
+)
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters, ContextTypes,
 )
 
-# ══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
 #  LOGGING
-# ══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
 logging.basicConfig(
     format="%(asctime)s │ %(levelname)-8s │ %(name)s │ %(message)s",
     level=logging.INFO,
 )
 logger = logging.getLogger("CyberGuard")
 
-# ══════════════════════════════════════════════════════
-#  CONFIG
-# ══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
+#  CONFIG  —  সব Render env vars দিয়ে override করা যাবে
+# ══════════════════════════════════════════════════════════
 BOT_TOKEN     = os.environ.get("BOT_TOKEN",     "8961784854:AAELWCP6aliyzDX3x0F2ohLTwd2FZSu2tAA")
 VT_KEY        = os.environ.get("VT_KEY",        "aa40f9a40b779d2e1684d10c11d23391538569ebc01a4fb82d62b9bfc5d157d0")
 AI_KEY        = os.environ.get("AI_KEY",        "AIzaSyDk7FWMBKsNwjWFl3FTsejKtkCPpfsWQPE")
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "CyberGuardX2025")
 WORKER_URL    = os.environ.get("WORKER_URL",    "")
-PORT          = int(os.environ.get("PORT",      8080))
+PORT          = int(os.environ.get("PORT",       8080))
 
-GOOGLE_KEYS  = [
+# Google Safe Browsing — 2 keys rotation
+GOOGLE_KEYS = [
     os.environ.get("GOOGLE_KEY1", "AIzaSyDV4BKDASUxA2OKvuPCjun-4_ABjLTxD6E"),
     os.environ.get("GOOGLE_KEY2", "AIzaSyDHA8tCLwxdu3TB3YY91AkCJx-sJ89HQsg"),
 ]
+
+# URLScan.io — 2 keys rotation
 URLSCAN_KEYS = [
     os.environ.get("URLSCAN_KEY1", "019e2194-ea13-766f-bc24-285934b33d8b"),
     os.environ.get("URLSCAN_KEY2", "019e2195-ad51-7728-bd17-b687a47f6aab"),
+]
+
+# ScreenshotAPI.net — 5 keys rotation + fallback
+SCREENSHOT_KEYS = [
+    os.environ.get("SHOT_KEY1", "key_7i9by7A1cJJ1nZFCjhAhLj"),
+    os.environ.get("SHOT_KEY2", "key_3nE6wqAXBhypx5ZPQf5CC8"),
+    os.environ.get("SHOT_KEY3", "key_7eqvqqr7htsQ2cGZQwaG3S"),
+    os.environ.get("SHOT_KEY4", "key_oe4RUEhtby2Nay2Jy3Dfzo"),
+    os.environ.get("SHOT_KEY5", "key_feofG3JYqtovFq8rBzWchQ"),
 ]
 
 AI_ENDPOINT = (
@@ -51,6 +66,9 @@ AI_ENDPOINT = (
     "/v1beta/models/gemini-1.5-flash-latest:generateContent"
 )
 
+# ══════════════════════════════════════════════════════════
+#  THREAT INTELLIGENCE LISTS
+# ══════════════════════════════════════════════════════════
 TRUSTED_DOMAINS = {
     "youtube.com","youtu.be","google.com","facebook.com","instagram.com",
     "github.com","render.com","cloudflare.com","netflix.com","microsoft.com",
@@ -68,42 +86,70 @@ RISKY_TLDS = {
 SUSPICIOUS_KW = {
     "girl","sex","xxx","porn","adult","nude","naked","escort","paid",
     "onlyfan","leak","free-money","win-prize","login-verify","verify-now",
-    "account-suspend","limited-offer","claim-now","lucky-winner","bit.ly",
+    "account-suspend","limited-offer","claim-now","lucky-winner",
 }
 
 URL_RE = re.compile(r"(https?://)?([a-zA-Z0-9\-]+\.[a-zA-Z]{2,}(/[^\s]*)?)")
 
-# ══════════════════════════════════════════════════════
-#  STATS & RATE LIMIT
-# ══════════════════════════════════════════════════════
-_stats = {"scans": 0, "threats": 0, "started": datetime.now(timezone.utc)}
-_rate  = defaultdict(list)   # user_id → [timestamps]
-RATE_LIMIT = 5               # max 5 scans per 60s per user
+# ══════════════════════════════════════════════════════════
+#  STATE
+# ══════════════════════════════════════════════════════════
+_stats   = {"scans": 0, "threats": 0, "started": datetime.now(timezone.utc)}
+_rate    = defaultdict(list)
+_gi = _ui = _si = 0          # key rotation counters
 
-def _check_rate(user_id: int) -> bool:
+RATE_LIMIT = 5               # per user per 60s
+
+def _check_rate(uid: int) -> bool:
     now = time.time()
-    _rate[user_id] = [t for t in _rate[user_id] if now - t < 60]
-    if len(_rate[user_id]) >= RATE_LIMIT:
+    _rate[uid] = [t for t in _rate[uid] if now - t < 60]
+    if len(_rate[uid]) >= RATE_LIMIT:
         return False
-    _rate[user_id].append(now)
+    _rate[uid].append(now)
     return True
 
-# ══════════════════════════════════════════════════════
-#  KEY ROTATION
-# ══════════════════════════════════════════════════════
-_gi = _ui = 0
+def _gkey() -> str:
+    global _gi; k = GOOGLE_KEYS[_gi % len(GOOGLE_KEYS)]; _gi += 1; return k
 
-def _next_keys():
-    global _gi, _ui
-    g = GOOGLE_KEYS[_gi  % len(GOOGLE_KEYS)]
-    u = URLSCAN_KEYS[_ui % len(URLSCAN_KEYS)]
-    _gi += 1; _ui += 1
-    return g, u
+def _ukey() -> str:
+    global _ui; k = URLSCAN_KEYS[_ui % len(URLSCAN_KEYS)]; _ui += 1; return k
 
-# ══════════════════════════════════════════════════════
-#  SCAN ENGINES  (সব asyncio → concurrent users OK)
-# ══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
+#  URL PARSING  —  entities ব্যবহার নেই, pure regex
+# ══════════════════════════════════════════════════════════
+def _parse_url(text: str) -> tuple[str, str] | None:
+    """
+    Returns (full_url, domain) or None.
+    Handles https:// https:/// http:// domain.com etc.
+    """
+    m = URL_RE.search(text.strip())
+    if not m:
+        return None
+    raw = m.group(0).strip()
+    # Fix extra slashes: https:/// → https://
+    raw = re.sub(r"^(https?:)/{2,}", r"\1//", raw)
+    full = raw if raw.startswith("http") else "https://" + raw
+    domain = re.sub(r"^https?://", "", full).split("/")[0].split("?")[0].lower().strip(".")
+    if not domain or "." not in domain:
+        return None
+    return full, domain
 
+def _extract_url_from_message(text: str, entities=None) -> str | None:
+    """
+    Group message থেকে URL বের করো।
+    Entity → regex order।
+    """
+    for ent in (entities or []):
+        if ent.type == "url":
+            return text[ent.offset: ent.offset + ent.length]
+        if ent.type == "text_link":
+            return ent.url
+    m = URL_RE.search(text)
+    return m.group(0) if m else None
+
+# ══════════════════════════════════════════════════════════
+#  SCAN ENGINE 1 — VirusTotal
+# ══════════════════════════════════════════════════════════
 async def vt_scan(url: str) -> dict:
     out = {"malicious": 0, "suspicious": 0, "categories": [], "link": ""}
     try:
@@ -126,8 +172,11 @@ async def vt_scan(url: str) -> dict:
         logger.warning(f"VT: {e}")
     return out
 
-
-async def google_sb(url: str, key: str) -> bool:
+# ══════════════════════════════════════════════════════════
+#  SCAN ENGINE 2 — Google Safe Browsing
+# ══════════════════════════════════════════════════════════
+async def google_sb(url: str) -> bool:
+    key = _gkey()
     try:
         async with httpx.AsyncClient(timeout=12) as c:
             r = await c.post(
@@ -135,8 +184,10 @@ async def google_sb(url: str, key: str) -> bool:
                 json={
                     "client": {"clientId": "cyberguard", "clientVersion": "2.0"},
                     "threatInfo": {
-                        "threatTypes": ["MALWARE","SOCIAL_ENGINEERING",
-                                        "UNWANTED_SOFTWARE","POTENTIALLY_HARMFUL_APPLICATION"],
+                        "threatTypes": [
+                            "MALWARE", "SOCIAL_ENGINEERING",
+                            "UNWANTED_SOFTWARE", "POTENTIALLY_HARMFUL_APPLICATION",
+                        ],
                         "platformTypes": ["ANY_PLATFORM"],
                         "threatEntryTypes": ["URL"],
                         "threatEntries": [{"url": url}],
@@ -144,11 +195,15 @@ async def google_sb(url: str, key: str) -> bool:
                 },
             )
             return bool(r.json().get("matches"))
-    except:
+    except Exception as e:
+        logger.warning(f"GSB: {e}")
         return False
 
-
-async def urlscan(url: str, key: str) -> tuple:
+# ══════════════════════════════════════════════════════════
+#  SCAN ENGINE 3 — URLScan.io
+# ══════════════════════════════════════════════════════════
+async def urlscan(url: str) -> tuple:
+    key = _ukey()
     try:
         async with httpx.AsyncClient(timeout=35) as c:
             r = await c.post(
@@ -157,7 +212,8 @@ async def urlscan(url: str, key: str) -> tuple:
                 json={"url": url, "visibility": "private"},
             )
             uuid = r.json().get("uuid")
-            if not uuid: return None, 0
+            if not uuid:
+                return None, 0
             await asyncio.sleep(20)
             res   = await c.get(f"https://urlscan.io/api/v1/result/{uuid}/")
             score = res.json().get("verdicts", {}).get("overall", {}).get("score", 0)
@@ -166,21 +222,55 @@ async def urlscan(url: str, key: str) -> tuple:
         logger.warning(f"URLScan: {e}")
         return None, 0
 
+# ══════════════════════════════════════════════════════════
+#  SCREENSHOT — 5-key rotation + thum.io fallback
+# ══════════════════════════════════════════════════════════
+async def take_screenshot(url: str) -> str | None:
+    global _si
 
-async def screenshot(url: str) -> str | None:
+    # Provider 1: screenshotapi.net (5 keys)
+    for attempt in range(len(SCREENSHOT_KEYS)):
+        key = SCREENSHOT_KEYS[_si % len(SCREENSHOT_KEYS)]
+        shot_url = (
+            f"https://shot.screenshotapi.net/screenshot"
+            f"?token={key}&url={url}&output=image&file_type=png"
+            f"&width=1280&height=800&fresh=true"
+            f"&no_ads=true&no_cookie_banners=true"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
+                r = await c.get(shot_url)
+                ct = r.headers.get("content-type", "")
+                if r.status_code == 200 and "image" in ct:
+                    logger.info(f"Screenshot ✅ key#{_si % len(SCREENSHOT_KEYS)}")
+                    _si += 1
+                    return shot_url
+                if r.status_code in (402, 429) or "limit" in r.text.lower():
+                    logger.warning(f"Screenshot key#{_si % len(SCREENSHOT_KEYS)} limit → rotate")
+                    _si += 1
+                    continue
+        except Exception as e:
+            logger.warning(f"Screenshot key#{_si % len(SCREENSHOT_KEYS)} error: {e}")
+        _si += 1
+
+    # Provider 2: thum.io (free fallback)
     try:
-        shot = f"https://image.thum.io/get/width/1280/crop/800/noanimate/{url}"
+        thum = f"https://image.thum.io/get/width/1280/crop/800/noanimate/{url}"
         async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
-            r = await c.get(shot)
+            r = await c.get(thum)
             if r.status_code == 200 and "image" in r.headers.get("content-type", ""):
-                return shot
-    except:
-        pass
+                logger.info("Screenshot ✅ thum.io fallback")
+                return thum
+    except Exception as e:
+        logger.warning(f"thum.io: {e}")
+
+    logger.warning("Screenshot ❌ all providers failed")
     return None
 
-
-async def http_headers(url: str) -> dict:
-    """HTTP Security Headers check করো।"""
+# ══════════════════════════════════════════════════════════
+#  HTTP SECURITY HEADERS
+# ══════════════════════════════════════════════════════════
+async def check_headers(url: str) -> dict:
     checks = {
         "Strict-Transport-Security": "❌",
         "Content-Security-Policy":   "❌",
@@ -197,7 +287,9 @@ async def http_headers(url: str) -> dict:
         pass
     return checks
 
-
+# ══════════════════════════════════════════════════════════
+#  DNS  &  WHOIS
+# ══════════════════════════════════════════════════════════
 async def dns_lookup(domain: str) -> dict:
     info = {"A": [], "MX": [], "NS": [], "TXT": []}
     try:
@@ -205,13 +297,12 @@ async def dns_lookup(domain: str) -> dict:
             for rt in ("A", "MX", "NS", "TXT"):
                 r = await c.get(
                     "https://dns.google/resolve",
-                    params={"name": domain, "type": rt}
+                    params={"name": domain, "type": rt},
                 )
                 info[rt] = [a["data"] for a in r.json().get("Answer", [])[:3]]
     except:
         pass
     return info
-
 
 async def whois_lookup(domain: str) -> dict:
     info = {"registrar": "N/A", "created": "N/A", "expires": "N/A", "country": "N/A"}
@@ -230,25 +321,28 @@ async def whois_lookup(domain: str) -> dict:
         pass
     return info
 
-# ══════════════════════════════════════════════════════
-#  AI ENGINE
-# ══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
+#  AI ENGINE — Gemini 1.5 Flash
+# ══════════════════════════════════════════════════════════
 _SYSTEM = (
-    "You are CyberGuard AI — an elite cybersecurity analyst. "
-    "Give concise (2-3 sentence), technically precise, actionable security assessments. "
+    "You are CyberGuard AI — elite cybersecurity analyst. "
+    "Give concise 2-3 sentence technically precise actionable assessments. "
     "No greetings. No disclaimers. Pure signal only."
 )
 _SAFETY = [
     {"category": c, "threshold": "BLOCK_NONE"}
-    for c in ["HARM_CATEGORY_HARASSMENT","HARM_CATEGORY_HATE_SPEECH",
-              "HARM_CATEGORY_SEXUALLY_EXPLICIT","HARM_CATEGORY_DANGEROUS_CONTENT"]
+    for c in [
+        "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
+        "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT",
+    ]
 ]
 
-async def _gemini(prompt: str, max_tokens: int = 220) -> str | None:
+async def _gemini(prompt: str, max_tokens: int = 250) -> str | None:
     try:
         async with httpx.AsyncClient(timeout=25) as c:
             r = await c.post(
-                f"{AI_ENDPOINT}?key={AI_KEY}",
+                f"https://generativelanguage.googleapis.com/v1beta/models"
+                f"/gemini-1.5-flash-latest:generateContent?key={AI_KEY}",
                 json={
                     "system_instruction": {"parts": [{"text": _SYSTEM}]},
                     "contents":           [{"parts": [{"text": prompt}]}],
@@ -260,29 +354,57 @@ async def _gemini(prompt: str, max_tokens: int = 220) -> str | None:
     except:
         return None
 
-async def ai_url_insight(domain, vt, gs, us, risk) -> str:
+async def ai_url_insight(domain, vt, gs, us_score, risk) -> str:
     r = await _gemini(
-        f"Domain:{domain} | VT:{vt['malicious']}M/{vt['suspicious']}S | "
-        f"GoogleSB:{'THREAT' if gs else 'clean'} | Sandbox:{us}/100 | Risk:{risk}%\n"
-        f"Categories:{', '.join(vt['categories']) or 'unknown'}\n"
+        f"Domain: {domain}\n"
+        f"VirusTotal: {vt['malicious']} malicious / {vt['suspicious']} suspicious\n"
+        f"Google Safe Browsing: {'THREAT DETECTED' if gs else 'clean'}\n"
+        f"Sandbox score: {us_score}/100  |  Aggregate risk: {risk}%\n"
+        f"Categories: {', '.join(vt['categories']) or 'unknown'}\n"
         f"Write 2-3 sentence technical security assessment."
     )
     if r: return r
-    if risk >= 60: return "High-confidence threat across multiple feeds. Avoid and report immediately."
-    if risk >= 21: return "Suspicious signals detected. Use isolated environment before proceeding."
-    return "No active threats. Maintain standard security hygiene."
+    if risk >= 60: return "High-confidence threat across multiple intelligence feeds. Avoid and escalate immediately."
+    if risk >= 21: return "Suspicious indicators present. Use isolated environment before proceeding."
+    return "No active threats detected. Maintain standard security hygiene."
 
-async def ai_qa(q: str) -> str:
-    r = await _gemini(q, max_tokens=450)
-    return r or "⚠️ AI engine temporarily unavailable. Try again shortly."
+async def ai_qa(question: str) -> str:
+    r = await _gemini(question, max_tokens=450)
+    return r or "⚠️ AI engine temporarily unavailable."
 
-# ══════════════════════════════════════════════════════
-#  HELPERS
-# ══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
+#  RISK SCORING
+# ══════════════════════════════════════════════════════════
+def calc_risk(vt, gs, us_score, domain, full_url) -> tuple[int, list]:
+    if any(d in domain for d in TRUSTED_DOMAINS):
+        return 0, []
+
+    tld      = "." + domain.rsplit(".", 1)[-1] if "." in domain else ""
+    kw_hits  = [k for k in SUSPICIOUS_KW if k in full_url.lower()]
+
+    risk = min(100,
+        (50 if vt["malicious"] > 2 else 20 if vt["malicious"] > 0 else 0)
+        + (50 if gs else 0)
+        + int(us_score / 5)
+        + (20 if tld in RISKY_TLDS else 0)
+        + (25 if kw_hits else 0)
+    )
+
+    flags = []
+    if tld in RISKY_TLDS:    flags.append(f"⚠️ High-risk TLD `{tld}`")
+    if kw_hits:              flags.append(f"⚠️ Suspicious keywords: `{', '.join(kw_hits[:4])}`")
+    if gs:                   flags.append("⚠️ Google Safe Browsing threat match")
+    if vt["malicious"] > 0: flags.append(f"⚠️ {vt['malicious']} AV engines flagged")
+
+    return risk, flags
+
+# ══════════════════════════════════════════════════════════
+#  SCAN ANIMATION
+# ══════════════════════════════════════════════════════════
 _STEPS = [
     ("🔍", "Resolving Infrastructure..."),
     ("🧬", "VirusTotal Multi-Engine Scan..."),
-    ("🛰️", "Google Threat Intelligence..."),
+    ("🛰️", "Google Safe Browsing Check..."),
     ("🧪", "Sandbox Detonation..."),
     ("📸", "Capturing Screenshot..."),
     ("🤖", "AI Risk Correlation..."),
@@ -303,170 +425,43 @@ async def _animate(msg):
         except:
             break
 
-def _extract_url(text: str, entities=None) -> str | None:
-    """Telegram entity থেকে link খোঁজো, না পেলে regex।"""
-    for ent in (entities or []):
-        if ent.type == "url":
-            return text[ent.offset: ent.offset + ent.length]
-        if ent.type == "text_link":
-            return ent.url
-    m = URL_RE.search(text)
-    return m.group(0) if m else None
-
-def _risk_score(vt, gs, us, domain, full_url) -> tuple:
-    trusted = any(d in domain for d in TRUSTED_DOMAINS)
-    if trusted:
-        return 0, []
-
-    tld       = "." + domain.rsplit(".", 1)[-1] if "." in domain else ""
-    risky_tld = tld in RISKY_TLDS
-    kw_hits   = [k for k in SUSPICIOUS_KW if k in full_url.lower()]
-
-    risk = min(
-        100,
-        (50 if vt["malicious"] > 2 else 20 if vt["malicious"] > 0 else 0)
-        + (50 if gs else 0)
-        + int(us / 5)
-        + (20 if risky_tld else 0)
-        + (25 if kw_hits else 0),
-    )
-
-    flags = []
-    if risky_tld:        flags.append(f"⚠️ High-risk TLD `{tld}`")
-    if kw_hits:          flags.append(f"⚠️ Suspicious keywords: `{', '.join(kw_hits[:4])}`")
-    if gs:               flags.append("⚠️ Google Safe Browsing threat match")
-    if vt["malicious"]:  flags.append(f"⚠️ {vt['malicious']} AV engines flagged")
-
-    return risk, flags
-
-# ══════════════════════════════════════════════════════
-#  COMMAND HANDLERS
-# ══════════════════════════════════════════════════════
-
-async def cmd_start(u: Update, _):
-    kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("📖 Help",       callback_data="help"),
-        InlineKeyboardButton("📊 Stats",      callback_data="stats"),
-    ],[
-        InlineKeyboardButton("🔍 Scan a URL", switch_inline_query_current_chat="/check "),
-    ]])
-    await u.message.reply_text(
-        "🛡️ *CyberGuard Pro*\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "Elite threat intelligence for your group.\n\n"
-        "📌 *Commands:*\n"
-        "• `/check <url>` — Full URL threat scan\n"
-        "• `/dns <domain>` — DNS records\n"
-        "• `/whois <domain>` — Domain WHOIS\n"
-        "• `/ip <address>` — IP reputation\n"
-        "• `/headers <url>` — HTTP security headers\n"
-        "• `/ask <question>` — AI security expert\n"
-        "• `/ping` — Bot latency check\n"
-        "• `/stats` — Scan statistics\n"
-        "• `/help` — Full help menu\n\n"
-        "💡 Group এ যেকোনো link পাঠালে auto-scan হবে!\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ VT · Google SB · URLScan · Gemini AI",
-        parse_mode="Markdown",
-        reply_markup=kb,
-    )
-
-async def cmd_help(u: Update, _):
-    await u.message.reply_text(
-        "🛡️ *CyberGuard Pro — Help*\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🔍 *URL Scan:*\n"
-        "`/check https://example.com`\n"
-        "VirusTotal + Google SB + Sandbox + AI analysis\n\n"
-        "🌐 *DNS Lookup:*\n"
-        "`/dns google.com`\n"
-        "A, MX, NS, TXT records\n\n"
-        "📋 *WHOIS:*\n"
-        "`/whois google.com`\n"
-        "Registrar, dates, country\n\n"
-        "🖥️ *IP Check:*\n"
-        "`/ip 8.8.8.8`\n"
-        "Hostname + PTR record\n\n"
-        "🔒 *HTTP Headers:*\n"
-        "`/headers https://example.com`\n"
-        "Security headers audit\n\n"
-        "🤖 *AI Expert:*\n"
-        "`/ask What is phishing?`\n"
-        "Cybersecurity Q&A\n\n"
-        "📊 `/stats` — Total scan count\n"
-        "🏓 `/ping` — Response time\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━\n"
-        "💡 Group এ link paste করলে auto scan হয়!",
-        parse_mode="Markdown",
-    )
-
-async def cmd_ping(u: Update, _):
-    t = time.time()
-    msg = await u.message.reply_text("🏓 Pinging...")
-    ms  = int((time.time() - t) * 1000)
-    await msg.edit_text(
-        f"🏓 *Pong!*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚡ Latency: `{ms}ms`\n"
-        f"🟢 Status: `Online`\n"
-        f"━━━━━━━━━━━━━━━━━━━━━",
-        parse_mode="Markdown",
-    )
-
-async def cmd_stats(u: Update, _):
-    uptime = datetime.now(timezone.utc) - _stats["started"]
-    hours  = int(uptime.total_seconds() // 3600)
-    await u.message.reply_text(
-        f"📊 *CyberGuard Stats*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔍 Total Scans:   `{_stats['scans']}`\n"
-        f"🚨 Threats Found: `{_stats['threats']}`\n"
-        f"⏱️ Uptime:        `{hours}h`\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚡ CyberGuard Pro",
-        parse_mode="Markdown",
-    )
-
-async def cmd_check(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    user_id = u.effective_user.id
-    if not _check_rate(user_id):
-        await u.message.reply_text(
-            "⏳ Too many requests! Wait 60 seconds.", parse_mode="Markdown"
-        )
+# ══════════════════════════════════════════════════════════
+#  CORE SCAN — সব কিছু এখানে
+# ══════════════════════════════════════════════════════════
+async def _scan_core(u: Update, url_input: str):
+    """
+    একমাত্র scan entry point।
+    cmd_check ও handle_text দুটোই এটা call করে।
+    """
+    if not _check_rate(u.effective_user.id):
+        await u.message.reply_text("⏳ Too many requests! Wait 60 seconds.")
         return
 
-    raw = re.sub(r"^/check\s*", "", u.message.text or "").strip()
-    if not raw:
-        await u.message.reply_text("❗ Usage: `/check <url>`", parse_mode="Markdown")
+    parsed = _parse_url(url_input)
+    if not parsed:
+        await u.message.reply_text("❗ Valid URL খুঁজে পাইনি।")
         return
 
-    found = _extract_url(raw, u.message.entities)
-    if not found:
-        await u.message.reply_text("❗ No valid URL found.")
-        return
-
-    full_url = found if found.startswith("http") else "https://" + found
-    domain   = re.sub(r"https?://", "", full_url).split("/")[0].lower()
-
+    full_url, domain = parsed
     status = await u.message.reply_text("📡 *Initialising CyberGuard...*", parse_mode="Markdown")
     anim   = asyncio.create_task(_animate(status))
 
-    gk, uk = _next_keys()
-
-    # সব engine একসাথে চলে — concurrent users এ কোনো সমস্যা নেই
-    vt, gs, (us_shot, us), shot = await asyncio.gather(
+    # সব engine একসাথে — concurrent users এ কোনো blocking নেই
+    vt, gs, (us_shot, us_score), shot = await asyncio.gather(
         vt_scan(full_url),
-        google_sb(full_url, gk),
-        urlscan(full_url, uk),
-        screenshot(full_url),
+        google_sb(full_url),
+        urlscan(full_url),
+        take_screenshot(full_url),
     )
     anim.cancel()
 
-    risk, flags = _risk_score(vt, gs, us, domain, full_url)
-    _stats["scans"]  += 1
-    if risk >= 60: _stats["threats"] += 1
+    risk, flags = calc_risk(vt, gs, us_score, domain, full_url)
+    _stats["scans"] += 1
+    if risk >= 60:
+        _stats["threats"] += 1
 
-    insight = await ai_url_insight(domain, vt, gs, us, risk)
+    insight = await ai_url_insight(domain, vt, gs, us_score, risk)
+
     verdict = (
         "🔴 *HIGH RISK*"  if risk >= 60 else
         "🟡 *SUSPICIOUS*" if risk >= 21 else
@@ -478,19 +473,19 @@ async def cmd_check(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     report = (
         f"🛡️ *CyberGuard Threat Report*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔗 `{full_url[:55]}`\n"
+        f"🔗 `{full_url[:60]}`\n"
         f"🌐 *Domain:* `{domain}`\n\n"
         f"🏁 *VERDICT:* {verdict}\n"
         f"📊 `[{bar}]` `{risk}%`\n\n"
         f"🧪 *Scan Results:*\n"
-        f"  • VirusTotal  `{vt['malicious']}M / {vt['suspicious']}S`\n"
-        f"  • Google SB   `{'⚠️ THREAT' if gs else '✅ Clean'}`\n"
-        f"  • Sandbox     `{us}/100`\n"
+        f"  • VirusTotal   `{vt['malicious']}M / {vt['suspicious']}S`\n"
+        f"  • Google SB    `{'⚠️ THREAT' if gs else '✅ Clean'}`\n"
+        f"  • Sandbox      `{us_score}/100`\n"
     )
     if vt["categories"]:
-        report += f"  • Category    `{', '.join(vt['categories'])}`\n"
+        report += f"  • Category     `{', '.join(vt['categories'])}`\n"
     if flags:
-        report += f"\n🚩 *Risk Flags:*\n" + "".join(f"  {f}\n" for f in flags)
+        report += "\n🚩 *Risk Flags:*\n" + "".join(f"  {f}\n" for f in flags)
     report += (
         f"\n🤖 *AI Insight:*\n_{insight}_\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -498,33 +493,121 @@ async def cmd_check(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
     kb = InlineKeyboardMarkup([[
-        InlineKeyboardButton("🔗 VT Report", url=vt["link"]) if vt["link"] else
-        InlineKeyboardButton("🛡️ CyberGuard", url="https://t.me"),
+        InlineKeyboardButton("🔗 VT Report", url=vt["link"])
     ]]) if vt["link"] else None
 
-    try: await status.delete()
-    except: pass
+    try:
+        await status.delete()
+    except:
+        pass
 
-    final_shot = (us_shot if (us_shot and risk >= 21) else None) or shot
+    # Screenshot: URLScan (risky site) অথবা screenshotapi/thum.io (সব site)
+    final_shot = (us_shot if us_shot and risk >= 21 else None) or shot
+
     if final_shot:
         try:
             await u.message.reply_photo(
-                photo=final_shot, caption=report,
+                photo=final_shot,
+                caption=report,
                 parse_mode=constants.ParseMode.MARKDOWN,
                 reply_markup=kb,
             )
             return
-        except: pass
+        except Exception as e:
+            logger.warning(f"Photo send failed: {e}")
 
     await u.message.reply_text(report, parse_mode="Markdown", reply_markup=kb)
 
+# ══════════════════════════════════════════════════════════
+#  COMMAND HANDLERS
+# ══════════════════════════════════════════════════════════
+
+async def cmd_start(u: Update, _):
+    kb = InlineKeyboardMarkup([[
+        InlineKeyboardButton("📖 Help",  callback_data="help"),
+        InlineKeyboardButton("📊 Stats", callback_data="stats"),
+    ]])
+    await u.message.reply_text(
+        "🛡️ *CyberGuard Pro*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "Elite threat intelligence for your group.\n\n"
+        "📌 *Commands:*\n"
+        "• `/check <url>` — Full threat scan\n"
+        "• `/dns <domain>` — DNS records\n"
+        "• `/whois <domain>` — WHOIS info\n"
+        "• `/ip <address>` — IP check\n"
+        "• `/headers <url>` — Security headers\n"
+        "• `/ask <question>` — AI expert\n"
+        "• `/ping` — Latency check\n"
+        "• `/stats` — Scan statistics\n\n"
+        "💡 *Group এ যেকোনো link পাঠালে auto-scan হবে!*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "⚡ VT · Google SB · URLScan · Gemini AI",
+        parse_mode="Markdown",
+        reply_markup=kb,
+    )
+
+async def cmd_help(u: Update, _):
+    await u.message.reply_text(
+        "🛡️ *CyberGuard Pro — Help*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🔍 `/check <url>`\n"
+        "VirusTotal + Google SB + Sandbox + AI\n\n"
+        "🌐 `/dns <domain>`\n"
+        "A, MX, NS, TXT records\n\n"
+        "📋 `/whois <domain>`\n"
+        "Registrar · dates · country\n\n"
+        "🖥️ `/ip <address>`\n"
+        "Hostname + PTR record\n\n"
+        "🔒 `/headers <url>`\n"
+        "HTTP security headers audit (A–F grade)\n\n"
+        "🤖 `/ask <question>`\n"
+        "AI cybersecurity Q&A\n\n"
+        "🏓 `/ping` — Response latency\n"
+        "📊 `/stats` — Total scans & threats\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 Group এ link paste করলে auto scan হয়!",
+        parse_mode="Markdown",
+    )
+
+async def cmd_ping(u: Update, _):
+    t   = time.time()
+    msg = await u.message.reply_text("🏓 Pinging...")
+    ms  = int((time.time() - t) * 1000)
+    await msg.edit_text(
+        f"🏓 *Pong!*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚡ Latency: `{ms}ms`\n"
+        f"🟢 Status:  `Online`\n"
+        f"━━━━━━━━━━━━━━━━━━━━━",
+        parse_mode="Markdown",
+    )
+
+async def cmd_stats(u: Update, _):
+    up = int((datetime.now(timezone.utc) - _stats["started"]).total_seconds() // 3600)
+    await u.message.reply_text(
+        f"📊 *CyberGuard Stats*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔍 Total Scans:   `{_stats['scans']}`\n"
+        f"🚨 Threats Found: `{_stats['threats']}`\n"
+        f"⏱️ Uptime:        `{up}h`\n"
+        f"━━━━━━━━━━━━━━━━━━━━━",
+        parse_mode="Markdown",
+    )
+
+async def cmd_check(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    raw = re.sub(r"^/(check|scan)\s*", "", u.message.text or "").strip()
+    if not raw:
+        await u.message.reply_text("❗ Usage: `/check <url>`", parse_mode="Markdown")
+        return
+    await _scan_core(u, raw)
 
 async def cmd_dns(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
         await u.message.reply_text("❗ Usage: `/dns <domain>`", parse_mode="Markdown"); return
     domain = ctx.args[0].lower().strip()
-    msg = await u.message.reply_text(f"🔍 `Resolving {domain}...`", parse_mode="Markdown")
-    d   = await dns_lookup(domain)
+    msg    = await u.message.reply_text(f"🔍 `Resolving {domain}...`", parse_mode="Markdown")
+    d      = await dns_lookup(domain)
     def fmt(lst): return "".join(f"  `{x}`\n" for x in lst) or "  `—`\n"
     await msg.edit_text(
         f"🌐 *DNS — {domain}*\n━━━━━━━━━━━━━━━━━━━━━\n"
@@ -535,7 +618,6 @@ async def cmd_dns(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
         f"━━━━━━━━━━━━━━━━━━━━━\n⚡ CyberGuard DNS",
         parse_mode="Markdown",
     )
-
 
 async def cmd_whois(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
@@ -553,7 +635,6 @@ async def cmd_whois(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
     )
 
-
 async def cmd_ip(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
         await u.message.reply_text("❗ Usage: `/ip <address>`", parse_mode="Markdown"); return
@@ -566,29 +647,27 @@ async def cmd_ip(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await msg.edit_text(
         f"🖥️ *IP — {ip}*\n━━━━━━━━━━━━━━━━━━━━━\n"
         f"🔀 *Hostname:* `{hostname}`\n"
-        f"📡 *PTR:* `{d['A'][0] if d['A'] else 'N/A'}`\n"
+        f"📡 *PTR:*      `{d['A'][0] if d['A'] else 'N/A'}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n⚡ CyberGuard IP",
         parse_mode="Markdown",
     )
-
 
 async def cmd_headers(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
         await u.message.reply_text("❗ Usage: `/headers <url>`", parse_mode="Markdown"); return
     url = ctx.args[0].strip()
     if not url.startswith("http"): url = "https://" + url
-    msg     = await u.message.reply_text(f"🔒 `Checking headers...`", parse_mode="Markdown")
-    headers = await http_headers(url)
-    score   = sum(1 for v in headers.values() if v == "✅")
-    grade   = "A" if score == 4 else "B" if score == 3 else "C" if score == 2 else "D" if score == 1 else "F"
+    msg   = await u.message.reply_text("🔒 `Checking security headers...`", parse_mode="Markdown")
+    hdrs  = await check_headers(url)
+    score = sum(1 for v in hdrs.values() if v == "✅")
+    grade = ["F","D","C","B","A"][score]
     await msg.edit_text(
-        f"🔒 *HTTP Headers — {url[:40]}*\n━━━━━━━━━━━━━━━━━━━━━\n"
-        + "".join(f"  {v} `{h}`\n" for h, v in headers.items())
+        f"🔒 *HTTP Headers — {url[:45]}*\n━━━━━━━━━━━━━━━━━━━━━\n"
+        + "".join(f"  {v} `{h}`\n" for h, v in hdrs.items())
         + f"\n📊 *Security Grade:* `{grade}` ({score}/4)\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n⚡ CyberGuard Headers",
         parse_mode="Markdown",
     )
-
 
 async def cmd_ask(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = re.sub(r"^/ask\s*", "", u.message.text or "").strip()
@@ -603,65 +682,44 @@ async def cmd_ask(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown",
     )
 
-
+# ══════════════════════════════════════════════════════════
+#  MESSAGE HANDLER — group link detect + private chat
+# ══════════════════════════════════════════════════════════
 async def handle_text(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    if not u.message or not u.message.text: return
+    if not u.message or not u.message.text:
+        return
+
     text      = u.message.text.strip()
     chat_type = u.message.chat.type
     is_group  = chat_type in (constants.ChatType.GROUP, constants.ChatType.SUPERGROUP)
     is_private = chat_type == constants.ChatType.PRIVATE
 
     if is_group:
-        found = _extract_url(text, u.message.entities)
-        if not found: return   # normal text → সম্পূর্ণ ignore
-        u.message.text = "/check " + found
-        await cmd_check(u, ctx)
+        # Entity দিয়ে link খোঁজো (সবচেয়ে accurate)
+        found = _extract_url_from_message(text, u.message.entities)
+        if not found:
+            return  # normal text → চুপ থাকো
+        await _scan_core(u, found)
 
     elif is_private:
-        if _extract_url(text, u.message.entities):
-            u.message.text = "/check " + text
-            await cmd_check(u, ctx)
+        # URL হলে scan, না হলে AI expert
+        if URL_RE.search(text):
+            await _scan_core(u, text)
         else:
             u.message.text = "/ask " + text
             await cmd_ask(u, ctx)
 
-
 async def handle_callback(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = u.callback_query
     await q.answer()
-    if q.data == "help":
-        await cmd_help(u, ctx)
-    elif q.data == "stats":
-        await cmd_stats(u, ctx)
+    if q.data == "help":  await cmd_help(u, ctx)
+    elif q.data == "stats": await cmd_stats(u, ctx)
 
-# ══════════════════════════════════════════════════════
-#  FLASK
-# ══════════════════════════════════════════════════════
-flask_app   = Flask(__name__)
-_ptb_app    = None
-_event_loop = asyncio.new_event_loop()
-
-def _run_loop():
-    asyncio.set_event_loop(_event_loop)
-    _event_loop.run_forever()
-
-def _register_handlers(app):
-    app.add_handler(CommandHandler("start",   cmd_start))
-    app.add_handler(CommandHandler("help",    cmd_help))
-    app.add_handler(CommandHandler("check",   cmd_check))
-    app.add_handler(CommandHandler("scan",    cmd_check))   # alias
-    app.add_handler(CommandHandler("dns",     cmd_dns))
-    app.add_handler(CommandHandler("whois",   cmd_whois))
-    app.add_handler(CommandHandler("ip",      cmd_ip))
-    app.add_handler(CommandHandler("headers", cmd_headers))
-    app.add_handler(CommandHandler("ask",     cmd_ask))
-    app.add_handler(CommandHandler("ping",    cmd_ping))
-    app.add_handler(CommandHandler("stats",   cmd_stats))
-    app.add_handler(CallbackQueryHandler(handle_callback))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-
+# ══════════════════════════════════════════════════════════
+#  BOT SETUP
+# ══════════════════════════════════════════════════════════
 _COMMANDS = [
-    BotCommand("start",   "Welcome & commands"),
+    BotCommand("start",   "Welcome & command list"),
     BotCommand("check",   "Full URL threat scan"),
     BotCommand("dns",     "DNS record lookup"),
     BotCommand("whois",   "Domain WHOIS info"),
@@ -673,57 +731,85 @@ _COMMANDS = [
     BotCommand("help",    "Help menu"),
 ]
 
-async def _boot():
+def _register(app):
+    app.add_handler(CommandHandler("start",   cmd_start))
+    app.add_handler(CommandHandler("help",    cmd_help))
+    app.add_handler(CommandHandler("check",   cmd_check))
+    app.add_handler(CommandHandler("scan",    cmd_check))
+    app.add_handler(CommandHandler("dns",     cmd_dns))
+    app.add_handler(CommandHandler("whois",   cmd_whois))
+    app.add_handler(CommandHandler("ip",      cmd_ip))
+    app.add_handler(CommandHandler("headers", cmd_headers))
+    app.add_handler(CommandHandler("ask",     cmd_ask))
+    app.add_handler(CommandHandler("ping",    cmd_ping))
+    app.add_handler(CommandHandler("stats",   cmd_stats))
+    app.add_handler(CallbackQueryHandler(handle_callback))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+
+# ══════════════════════════════════════════════════════════
+#  FLASK  (webhook receiver + health check)
+# ══════════════════════════════════════════════════════════
+flask_app   = Flask(__name__)
+_ptb_app    = None
+_event_loop = asyncio.new_event_loop()
+
+def _run_loop():
+    asyncio.set_event_loop(_event_loop)
+    _event_loop.run_forever()
+
+async def _boot_webhook():
     global _ptb_app
     _ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
-    _register_handlers(_ptb_app)
+    _register(_ptb_app)
     await _ptb_app.initialize()
     await _ptb_app.start()
-    if WORKER_URL:
-        wh = f"{WORKER_URL.rstrip('/')}/telegram"
-        await _ptb_app.bot.set_webhook(url=wh, secret_token=WORKER_SECRET)
-        logger.info(f"Webhook → {wh}")
+    wh = f"{WORKER_URL.rstrip('/')}/telegram"
+    await _ptb_app.bot.set_webhook(url=wh, secret_token=WORKER_SECRET)
     await _ptb_app.bot.set_my_commands(_COMMANDS)
+    logger.info(f"Webhook → {wh}")
     logger.info("CyberGuard Pro ready ✅")
-
 
 @flask_app.route("/", methods=["GET"])
 def health():
     return Response("🛡️ CyberGuard Pro — Online", status=200)
-
 
 @flask_app.route("/telegram", methods=["POST"])
 def tg_webhook():
     if request.headers.get("X-Worker-Secret", "") != WORKER_SECRET:
         return Response("Forbidden", status=403)
     data = request.get_json(force=True, silent=True)
-    if not data: return Response("Bad Request", status=400)
+    if not data:
+        return Response("Bad Request", status=400)
     update = Update.de_json(data, _ptb_app.bot)
     asyncio.run_coroutine_threadsafe(_ptb_app.process_update(update), _event_loop)
     return Response("ok", status=200)
 
-# ══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
 #  ENTRY POINT
-# ══════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════
 if __name__ == "__main__":
     if WORKER_URL:
-        # Webhook mode (Cloudflare আছে)
+        # ── Webhook mode (Cloudflare Worker আছে) ──
+        logger.info("Starting webhook mode...")
         threading.Thread(target=_run_loop, daemon=True).start()
-        asyncio.run_coroutine_threadsafe(_boot(), _event_loop).result(timeout=30)
-        logger.info(f"Webhook mode on :{PORT}")
+        asyncio.run_coroutine_threadsafe(_boot_webhook(), _event_loop).result(timeout=30)
         flask_app.run(host="0.0.0.0", port=PORT, use_reloader=False, threaded=True)
     else:
-        # Polling mode (Cloudflare ছাড়া)
-        logger.info("Polling mode...")
-        poll = ApplicationBuilder().token(BOT_TOKEN).build()
-        _register_handlers(poll)
+        # ── Polling mode (Cloudflare ছাড়া) ──
+        logger.info("Starting polling mode...")
 
         async def _post_init(app):
             await app.bot.set_my_commands(_COMMANDS)
 
+        poll = ApplicationBuilder().token(BOT_TOKEN).build()
         poll.post_init = _post_init
+        _register(poll)
+
         threading.Thread(
-            target=lambda: flask_app.run(host="0.0.0.0", port=PORT, use_reloader=False),
+            target=lambda: flask_app.run(
+                host="0.0.0.0", port=PORT, use_reloader=False
+            ),
             daemon=True,
         ).start()
+
         poll.run_polling(allowed_updates=Update.ALL_TYPES)
