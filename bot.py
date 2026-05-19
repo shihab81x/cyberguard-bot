@@ -571,13 +571,12 @@ async def cmd_help(u: Update, _):
     )
 
 async def cmd_ping(u: Update, _):
-    t   = time.time()
     msg = await u.message.reply_text("🏓 Pinging...")
-    ms  = int((time.time() - t) * 1000)
-    await msg.edit_text(
+    t   = time.time()                               # ← send এর পর শুরু
+    await msg.edit_text(                            # ← edit এর সময় measure
         f"🏓 *Pong!*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚡ Latency: `{ms}ms`\n"
+        f"⚡ Latency: `{int((time.time() - t) * 1000)}ms`\n"
         f"🟢 Status:  `Online`\n"
         f"━━━━━━━━━━━━━━━━━━━━━",
         parse_mode="Markdown",
@@ -792,7 +791,17 @@ def _run_loop():
 
 async def _boot_webhook():
     global _ptb_app
-    _ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
+    _ptb_app = (
+        ApplicationBuilder()
+        .token(BOT_TOKEN)
+        .connection_pool_size(32)       # default 1 → 32 (reuse connections)
+        .connect_timeout(5)
+        .read_timeout(10)
+        .write_timeout(10)
+        .pool_timeout(5)
+        .concurrent_updates(True)       # multiple users একসাথে handle
+        .build()
+    )
     _register(_ptb_app)
     await _ptb_app.initialize()
     await _ptb_app.start()
@@ -834,7 +843,17 @@ if __name__ == "__main__":
         async def _post_init(app):
             await app.bot.set_my_commands(_COMMANDS)
 
-        poll = ApplicationBuilder().token(BOT_TOKEN).build()
+        poll = (
+            ApplicationBuilder()
+            .token(BOT_TOKEN)
+            .connection_pool_size(32)       # default 1 → 32
+            .connect_timeout(5)
+            .read_timeout(10)
+            .write_timeout(10)
+            .pool_timeout(5)
+            .concurrent_updates(True)       # multiple users একসাথে handle
+            .build()
+        )
         poll.post_init = _post_init
         _register(poll)
 
