@@ -572,11 +572,20 @@ async def cmd_help(u: Update, _):
 
 async def cmd_ping(u: Update, _):
     msg = await u.message.reply_text("🏓 Pinging...")
-    t   = time.time()                               # ← send এর পর শুরু
-    await msg.edit_text(                            # ← edit এর সময় measure
+    t   = time.time()                                   # ← timer শুরু
+    await msg.edit_text(                                # ← এই call টা measure হবে
+        "🏓 *Pong!*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "⚡ Latency: `measuring...`\n"
+        "🟢 Status:  `Online`\n"
+        "━━━━━━━━━━━━━━━━━━━━━",
+        parse_mode="Markdown",
+    )
+    ms = int((time.time() - t) * 1000)                 # ← await শেষে calculate
+    await msg.edit_text(
         f"🏓 *Pong!*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚡ Latency: `{int((time.time() - t) * 1000)}ms`\n"
+        f"⚡ Latency: `{ms}ms`\n"
         f"🟢 Status:  `Online`\n"
         f"━━━━━━━━━━━━━━━━━━━━━",
         parse_mode="Markdown",
