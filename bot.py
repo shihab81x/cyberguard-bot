@@ -572,8 +572,8 @@ async def cmd_help(u: Update, _):
 
 async def cmd_ping(u: Update, _):
     msg = await u.message.reply_text("🏓 Pinging...")
-    t   = time.time()                                   # ← timer শুরু
-    await msg.edit_text(                                # ← এই call টা measure হবে
+    t   = time.time()
+    await msg.edit_text(
         "🏓 *Pong!*\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
         "⚡ Latency: `measuring...`\n"
@@ -581,7 +581,7 @@ async def cmd_ping(u: Update, _):
         "━━━━━━━━━━━━━━━━━━━━━",
         parse_mode="Markdown",
     )
-    ms = int((time.time() - t) * 1000)                 # ← await শেষে calculate
+    ms = int((time.time() - t) * 1000)
     await msg.edit_text(
         f"🏓 *Pong!*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -720,7 +720,6 @@ async def handle_text(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def handle_callback(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = u.callback_query
     await q.answer()
-
     if q.data == "help":
         await q.message.reply_text(
             "🛡️ *CyberGuard Pro — Help*\n"
@@ -743,7 +742,6 @@ async def handle_callback(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "💡 Group এ link paste করলে auto scan হয়!",
             parse_mode="Markdown",
         )
-
     elif q.data == "stats":
         up = int((datetime.now(timezone.utc) - _stats["started"]).total_seconds() // 3600)
         await q.message.reply_text(
@@ -800,17 +798,7 @@ def _run_loop():
 
 async def _boot_webhook():
     global _ptb_app
-    _ptb_app = (
-        ApplicationBuilder()
-        .token(BOT_TOKEN)
-        .connection_pool_size(32)       # default 1 → 32 (reuse connections)
-        .connect_timeout(5)
-        .read_timeout(10)
-        .write_timeout(10)
-        .pool_timeout(5)
-        .concurrent_updates(True)       # multiple users একসাথে handle
-        .build()
-    )
+    _ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
     _register(_ptb_app)
     await _ptb_app.initialize()
     await _ptb_app.start()
@@ -852,17 +840,7 @@ if __name__ == "__main__":
         async def _post_init(app):
             await app.bot.set_my_commands(_COMMANDS)
 
-        poll = (
-            ApplicationBuilder()
-            .token(BOT_TOKEN)
-            .connection_pool_size(32)       # default 1 → 32
-            .connect_timeout(5)
-            .read_timeout(10)
-            .write_timeout(10)
-            .pool_timeout(5)
-            .concurrent_updates(True)       # multiple users একসাথে handle
-            .build()
-        )
+        poll = ApplicationBuilder().token(BOT_TOKEN).build()
         poll.post_init = _post_init
         _register(poll)
 
