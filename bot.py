@@ -35,7 +35,7 @@ logger = logging.getLogger("CyberGuard")
 # ══════════════════════════════════════════════════════════
 BOT_TOKEN     = os.environ.get("BOT_TOKEN",     "8961784854:AAELWCP6aliyzDX3x0F2ohLTwd2FZSu2tAA")
 VT_KEY        = os.environ.get("VT_KEY",        "aa40f9a40b779d2e1684d10c11d23391538569ebc01a4fb82d62b9bfc5d157d0")
-AI_KEY        = os.environ.get("AI_KEY",        "AIzaSyDk7FWMBKsNwjWFl3FTsejKtkCPpfsWQPE")
+AI_KEY        = os.environ.get("AI_KEY",        "AIzaSyBK4GFe8jIKccgM2eW2yVjxuVwdc3XVZvI")
 WORKER_SECRET = os.environ.get("WORKER_SECRET", "CyberGuardX2025")
 WORKER_URL    = os.environ.get("WORKER_URL",    "")
 PORT          = int(os.environ.get("PORT",       8080))
@@ -75,6 +75,16 @@ TRUSTED_DOMAINS = {
     "apple.com","amazon.com","twitter.com","x.com","linkedin.com","wikipedia.org",
     "stackoverflow.com","reddit.com","discord.com","telegram.org","tiktok.com",
     "whatsapp.com","zoom.us","dropbox.com","drive.google.com","docs.google.com",
+}
+
+# এই domain গুলোর link group এ আসলে scan করবে না (internal/messaging links)
+SKIP_SCAN_DOMAINS = {
+    "t.me","telegram.me","telegram.org",
+    "wa.me","whatsapp.com",
+    "discord.gg","discord.com",
+    "instagram.com","facebook.com",
+    "youtube.com","youtu.be",
+    "twitter.com","x.com",
 }
 
 RISKY_TLDS = {
@@ -339,6 +349,7 @@ _SAFETY = [
 
 async def _gemini(prompt: str, max_tokens: int = 250) -> str | None:
     models = [
+        "gemini-flash-latest",
         "gemini-2.0-flash",
         "gemini-1.5-flash",
         "gemini-1.5-flash-latest",
@@ -719,6 +730,23 @@ async def handle_text(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
         found = _extract_url_from_message(text, u.message.entities)
         if not found:
             return  # normal text → চুপ থাকো
+        # Telegram/social app internal link হলে scan করবো না
+        parsed = _parse_url(found)
+        if parsed:
+            _, domain = parsed
+            base = domain.replace("www.", "")
+            if any(base == s or base.endswith("." + s) for s in SKIP_SCAN_DOMAINS):
+                await u.message.reply_text(
+                    f"ℹ️ *Scan Skipped — Domain Verified*\n"
+                    f"━━━━━━━━━━━━━━━━━━━━━\n"
+                    f"🔗 `{found[:60]}`\n"
+                    f"🌐 Domain: `{base}`\n\n"
+                    f"✅ This is an official & verified platform domain. No threat scan needed.\n\n"
+                    f"⚠️ However, always be cautious about the *content* you open.\n\n"
+                    f"⚡ CyberGuard Pro",
+                    parse_mode="Markdown",
+                )
+                return
         await _scan_core(u, found)
 
     elif is_private:
