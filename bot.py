@@ -338,21 +338,33 @@ _SAFETY = [
 ]
 
 async def _gemini(prompt: str, max_tokens: int = 250) -> str | None:
-    try:
-        async with httpx.AsyncClient(timeout=25) as c:
-            r = await c.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models"
-                f"/gemini-1.5-flash-latest:generateContent?key={AI_KEY}",
-                json={
-                    "system_instruction": {"parts": [{"text": _SYSTEM}]},
-                    "contents":           [{"parts": [{"text": prompt}]}],
-                    "safetySettings":     _SAFETY,
-                    "generationConfig":   {"temperature": 0.2, "maxOutputTokens": max_tokens},
-                },
-            )
-            return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-    except:
-        return None
+    models = [
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-1.5-flash-latest",
+    ]
+    for model in models:
+        try:
+            async with httpx.AsyncClient(timeout=25) as c:
+                r = await c.post(
+                    f"https://generativelanguage.googleapis.com/v1beta/models"
+                    f"/{model}:generateContent?key={AI_KEY}",
+                    json={
+                        "system_instruction": {"parts": [{"text": _SYSTEM}]},
+                        "contents":           [{"parts": [{"text": prompt}]}],
+                        "safetySettings":     _SAFETY,
+                        "generationConfig":   {"temperature": 0.2, "maxOutputTokens": max_tokens},
+                    },
+                )
+                data = r.json()
+                if "candidates" in data:
+                    logger.info(f"Gemini ✅ model={model}")
+                    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                else:
+                    logger.warning(f"Gemini {model} no candidates: {data}")
+        except Exception as e:
+            logger.warning(f"Gemini {model} error: {e}")
+    return None
 
 async def ai_url_insight(domain, vt, gs, us_score, risk) -> str:
     r = await _gemini(
