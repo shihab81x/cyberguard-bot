@@ -712,8 +712,41 @@ async def handle_text(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def handle_callback(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q = u.callback_query
     await q.answer()
-    if q.data == "help":  await cmd_help(u, ctx)
-    elif q.data == "stats": await cmd_stats(u, ctx)
+
+    if q.data == "help":
+        await q.message.reply_text(
+            "🛡️ *CyberGuard Pro — Help*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n\n"
+            "🔍 `/check <url>`\n"
+            "VirusTotal + Google SB + Sandbox + AI\n\n"
+            "🌐 `/dns <domain>`\n"
+            "A, MX, NS, TXT records\n\n"
+            "📋 `/whois <domain>`\n"
+            "Registrar · dates · country\n\n"
+            "🖥️ `/ip <address>`\n"
+            "Hostname + PTR record\n\n"
+            "🔒 `/headers <url>`\n"
+            "HTTP security headers audit (A–F grade)\n\n"
+            "🤖 `/ask <question>`\n"
+            "AI cybersecurity Q&A\n\n"
+            "🏓 `/ping` — Response latency\n"
+            "📊 `/stats` — Total scans & threats\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "💡 Group এ link paste করলে auto scan হয়!",
+            parse_mode="Markdown",
+        )
+
+    elif q.data == "stats":
+        up = int((datetime.now(timezone.utc) - _stats["started"]).total_seconds() // 3600)
+        await q.message.reply_text(
+            f"📊 *CyberGuard Stats*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔍 Total Scans:   `{_stats['scans']}`\n"
+            f"🚨 Threats Found: `{_stats['threats']}`\n"
+            f"⏱️ Uptime:        `{up}h`\n"
+            f"━━━━━━━━━━━━━━━━━━━━━",
+            parse_mode="Markdown",
+        )
 
 # ══════════════════════════════════════════════════════════
 #  BOT SETUP
