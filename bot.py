@@ -52,14 +52,6 @@ URLSCAN_KEYS = [
     os.environ.get("URLSCAN_KEY2", "019e2195-ad51-7728-bd17-b687a47f6aab"),
 ]
 
-# ScreenshotAPI.net — 5 keys rotation + fallback
-SCREENSHOT_KEYS = [
-    os.environ.get("SHOT_KEY1", "key_7i9by7A1cJJ1nZFCjhAhLj"),
-    os.environ.get("SHOT_KEY2", "key_3nE6wqAXBhypx5ZPQf5CC8"),
-    os.environ.get("SHOT_KEY3", "key_7eqvqqr7htsQ2cGZQwaG3S"),
-    os.environ.get("SHOT_KEY4", "key_oe4RUEhtby2Nay2Jy3Dfzo"),
-    os.environ.get("SHOT_KEY5", "key_feofG3JYqtovFq8rBzWchQ"),
-]
 
 AI_ENDPOINT = (
     "https://generativelanguage.googleapis.com"
@@ -106,7 +98,7 @@ URL_RE = re.compile(r"(https?://)?([a-zA-Z0-9\-]+\.[a-zA-Z]{2,}(/[^\s]*)?)")
 # ══════════════════════════════════════════════════════════
 _stats   = {"scans": 0, "threats": 0, "started": datetime.now(timezone.utc)}
 _rate    = defaultdict(list)
-_gi = _ui = _si = 0          # key rotation counters
+_gi = _ui = 0                # key rotation counters
 
 RATE_LIMIT = 5               # per user per 60s
 
@@ -233,35 +225,24 @@ async def urlscan(url: str) -> tuple:
         return None, 0
 
 # ══════════════════════════════════════════════════════════
-#  SCREENSHOT — 5-key rotation + thum.io fallback
+#  SCREENSHOT — Microlink (free, no key) + thum.io fallback
 # ══════════════════════════════════════════════════════════
 async def take_screenshot(url: str) -> str | None:
-    global _si
 
-    # Provider 1: screenshotapi.net (5 keys)
-    for attempt in range(len(SCREENSHOT_KEYS)):
-        key = SCREENSHOT_KEYS[_si % len(SCREENSHOT_KEYS)]
-        shot_url = (
-            f"https://shot.screenshotapi.net/screenshot"
-            f"?token={key}&url={url}&output=image&file_type=png"
-            f"&width=1280&height=800&fresh=true"
-            f"&no_ads=true&no_cookie_banners=true"
-        )
-        try:
-            async with httpx.AsyncClient(timeout=25, follow_redirects=True) as c:
-                r = await c.get(shot_url)
-                ct = r.headers.get("content-type", "")
-                if r.status_code == 200 and "image" in ct:
-                    logger.info(f"Screenshot ✅ key#{_si % len(SCREENSHOT_KEYS)}")
-                    _si += 1
+    # Provider 1: Microlink (free, no API key needed)
+    try:
+        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+            r = await c.get(
+                "https://api.microlink.io/",
+                params={"url": url, "screenshot": "true", "meta": "false"},
+            )
+            if r.status_code == 200:
+                shot_url = r.json().get("data", {}).get("screenshot", {}).get("url")
+                if shot_url:
+                    logger.info("Screenshot ✅ Microlink")
                     return shot_url
-                if r.status_code in (402, 429) or "limit" in r.text.lower():
-                    logger.warning(f"Screenshot key#{_si % len(SCREENSHOT_KEYS)} limit → rotate")
-                    _si += 1
-                    continue
-        except Exception as e:
-            logger.warning(f"Screenshot key#{_si % len(SCREENSHOT_KEYS)} error: {e}")
-        _si += 1
+    except Exception as e:
+        logger.warning(f"Microlink: {e}")
 
     # Provider 2: thum.io (free fallback)
     try:
@@ -524,7 +505,7 @@ async def _scan_core(u: Update, url_input: str):
     except:
         pass
 
-    # Screenshot: URLScan (risky site) অথবা screenshotapi/thum.io (সব site)
+    # Screenshot: URLScan (risky site) অথবা Microlink/thum.io (সব site)
     final_shot = (us_shot if us_shot and risk >= 21 else None) or shot
 
     if final_shot:
