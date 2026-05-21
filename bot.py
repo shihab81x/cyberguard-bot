@@ -231,15 +231,22 @@ async def take_screenshot(url: str) -> str | None:
 
     # Provider 1: Microlink (free, no API key needed)
     try:
-        async with httpx.AsyncClient(timeout=30, follow_redirects=True) as c:
+        async with httpx.AsyncClient(timeout=45, follow_redirects=True) as c:
             r = await c.get(
                 "https://api.microlink.io/",
-                params={"url": url, "screenshot": "true", "meta": "false"},
+                params={
+                    "url":                  url,
+                    "screenshot":           "true",
+                    "screenshot.fullPage":  "true",   # full page scroll screenshot
+                    "waitUntil":            "networkidle2",  # পেজ পুরো load হওয়া পর্যন্ত অপেক্ষা
+                    "waitForTimeout":       "3000",    # extra 3s JS render এর জন্য
+                    "meta":                 "false",
+                },
             )
             if r.status_code == 200:
                 shot_url = r.json().get("data", {}).get("screenshot", {}).get("url")
                 if shot_url:
-                    logger.info("Screenshot ✅ Microlink")
+                    logger.info("Screenshot ✅ Microlink fullPage")
                     return shot_url
     except Exception as e:
         logger.warning(f"Microlink: {e}")
@@ -330,10 +337,9 @@ _SAFETY = [
 
 async def _gemini(prompt: str, max_tokens: int = 250) -> str | None:
     models = [
-        "gemini-flash-latest",
-        "gemini-2.0-flash",
-        "gemini-1.5-flash",
-        "gemini-1.5-flash-latest",
+        "gemini-2.5-pro",           # 🔥 Best — primary
+        "gemini-2.5-flash",         # fast fallback
+        "gemini-2.0-flash",         # older fallback
     ]
     for model in models:
         try:
