@@ -447,6 +447,22 @@ async def _scan_core(u: Update, url_input: str):
         return
 
     full_url, domain = parsed
+
+    # Verified platform হলে scan skip করো (group + private + /check সব জায়গায়)
+    base = domain.replace("www.", "")
+    if any(base == s or base.endswith("." + s) for s in SKIP_SCAN_DOMAINS):
+        await u.message.reply_text(
+            f"ℹ️ *Scan Skipped — Domain Verified*\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"🔗 `{full_url[:60]}`\n"
+            f"🌐 Domain: `{base}`\n\n"
+            f"✅ This is an official & verified platform domain. No threat scan needed.\n\n"
+            f"⚠️ However, always be cautious about the *content* you open.\n\n"
+            f"⚡ CyberGuard Pro",
+            parse_mode="Markdown",
+        )
+        return
+
     status = await u.message.reply_text("📡 *Initialising CyberGuard...*", parse_mode="Markdown")
     anim   = asyncio.create_task(_animate(status))
 
@@ -510,13 +526,17 @@ async def _scan_core(u: Update, url_input: str):
 
     if final_shot:
         try:
-            await u.message.reply_photo(
-                photo=final_shot,
-                caption=report,
-                parse_mode=constants.ParseMode.MARKDOWN,
-                reply_markup=kb,
-            )
-            return
+            import io
+            async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
+                img_r = await c.get(final_shot)
+            if img_r.status_code == 200 and "image" in img_r.headers.get("content-type", ""):
+                await u.message.reply_photo(
+                    photo=io.BytesIO(img_r.content),
+                    caption=report,
+                    parse_mode=constants.ParseMode.MARKDOWN,
+                    reply_markup=kb,
+                )
+                return
         except Exception as e:
             logger.warning(f"Photo send failed: {e}")
 
