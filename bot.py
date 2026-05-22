@@ -495,11 +495,8 @@ async def _scan_core(u: Update, url_input: str):
         "🟢 *SAFE*"
     )
     filled  = risk // 10
-    bar     = ("▓" * filled) + ("░" * (10 - filled))   # সব device এ ঠিকঠাক দেখায়
+    bar     = ("#" * filled) + ("-" * (10 - filled))   # pure ASCII — সব device এ কাজ করে
     ts      = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-
-    # domain এ dot থাকলে Telegram auto-link করে — backtick দিয়ে escape
-    safe_domain = domain.replace(".", "\\.") if "." in domain else domain
 
     report = (
         f"🛡️ *CyberGuard Threat Report*\n"
@@ -517,10 +514,10 @@ async def _scan_core(u: Update, url_input: str):
         report += f"  • Category     `{', '.join(vt['categories'])}`\n"
     if flags:
         report += "\n🚩 *Risk Flags:*\n" + "".join(f"  {f}\n" for f in flags)
-    # insight শেষে কেটে গেলে ellipsis যোগ করো না — পুরোটা দেখাও
-    insight_clean = insight.strip().rstrip(".")
+    # italic wrap সরালাম — domain/url থাকলে Telegram parse ভাঙে
+    insight_clean = insight.strip()
     report += (
-        f"\n🤖 *AI Insight:*\n_{insight_clean}_\n\n"
+        f"\n🤖 *AI Insight:*\n{insight_clean}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"⚡ CyberGuard Pro · {ts}"
     )
