@@ -91,7 +91,12 @@ SUSPICIOUS_KW = {
     "account-suspend","limited-offer","claim-now","lucky-winner",
 }
 
-URL_RE = re.compile(r"(https?://)?([a-zA-Z0-9\-]+\.[a-zA-Z]{2,}(/[^\s]*)?)")
+URL_RE = re.compile(
+    r"(?:"
+    r"https?://[^\s<>\"']+|"                           # http:// বা https:// দিয়ে শুরু — সবসময় valid
+    r"(?<!\w)[a-zA-Z0-9\-]+\.[a-zA-Z]{2,6}(?:/[^\s]*)?"  # bare domain — শুধু word boundary তে
+    r")"
+)
 
 # ══════════════════════════════════════════════════════════
 #  STATE
@@ -119,6 +124,16 @@ def _ukey() -> str:
 # ══════════════════════════════════════════════════════════
 #  URL PARSING  —  entities ব্যবহার নেই, pure regex
 # ══════════════════════════════════════════════════════════
+VALID_TLDS = {
+    "com","net","org","io","co","app","dev","ai","me","info","biz","edu","gov",
+    "uk","us","ca","au","de","fr","jp","cn","in","br","ru","it","es","nl","se",
+    "xyz","site","top","online","club","icu","pw","tk","ml","cf","ga","gq",
+    "live","fun","vip","work","click","win","download","stream","pro","store",
+    "shop","tech","cloud","digital","media","news","blog","web","host","link",
+    "ly","gg","gl","is","to","cc","tv","fm","am","id","my","sg","ph","ng",
+    "ke","gh","za","bd","pk","lk","np","mm","kh","vn","th",
+}
+
 def _parse_url(text: str) -> tuple[str, str] | None:
     """
     Returns (full_url, domain) or None.
@@ -133,6 +148,10 @@ def _parse_url(text: str) -> tuple[str, str] | None:
     full = raw if raw.startswith("http") else "https://" + raw
     domain = re.sub(r"^https?://", "", full).split("/")[0].split("?")[0].lower().strip(".")
     if not domain or "." not in domain:
+        return None
+    # TLD check — fake word e.amake, e.Amake এরকম reject করো
+    tld = domain.rsplit(".", 1)[-1].lower()
+    if tld not in VALID_TLDS:
         return None
     return full, domain
 
