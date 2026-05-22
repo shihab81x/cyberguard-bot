@@ -335,7 +335,7 @@ _SAFETY = [
     ]
 ]
 
-async def _gemini(prompt: str, max_tokens: int = 250) -> str | None:
+async def _gemini(prompt: str, max_tokens: int = 350) -> str | None:
     models = [
         "gemini-2.5-pro",           # 🔥 Best — primary
         "gemini-2.5-flash",         # fast fallback
@@ -371,7 +371,8 @@ async def ai_url_insight(domain, vt, gs, us_score, risk) -> str:
         f"Google Safe Browsing: {'THREAT DETECTED' if gs else 'clean'}\n"
         f"Sandbox score: {us_score}/100  |  Aggregate risk: {risk}%\n"
         f"Categories: {', '.join(vt['categories']) or 'unknown'}\n"
-        f"Write 2-3 sentence technical security assessment."
+        f"Write a 2-3 sentence technical security assessment. Always complete your sentences fully.",
+        max_tokens=300,   # আগে default ছিল, এখন explicit — truncate হবে না
     )
     if r: return r
     if risk >= 60: return "High-confidence threat across multiple intelligence feeds. Avoid and escalate immediately."
@@ -493,8 +494,12 @@ async def _scan_core(u: Update, url_input: str):
         "🟡 *SUSPICIOUS*" if risk >= 21 else
         "🟢 *SAFE*"
     )
-    bar = "█" * (risk // 10) + "░" * (10 - risk // 10)
-    ts  = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    filled  = risk // 10
+    bar     = ("▓" * filled) + ("░" * (10 - filled))   # সব device এ ঠিকঠাক দেখায়
+    ts      = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+    # domain এ dot থাকলে Telegram auto-link করে — backtick দিয়ে escape
+    safe_domain = domain.replace(".", "\\.") if "." in domain else domain
 
     report = (
         f"🛡️ *CyberGuard Threat Report*\n"
@@ -512,8 +517,10 @@ async def _scan_core(u: Update, url_input: str):
         report += f"  • Category     `{', '.join(vt['categories'])}`\n"
     if flags:
         report += "\n🚩 *Risk Flags:*\n" + "".join(f"  {f}\n" for f in flags)
+    # insight শেষে কেটে গেলে ellipsis যোগ করো না — পুরোটা দেখাও
+    insight_clean = insight.strip().rstrip(".")
     report += (
-        f"\n🤖 *AI Insight:*\n_{insight}_\n\n"
+        f"\n🤖 *AI Insight:*\n_{insight_clean}_\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
         f"⚡ CyberGuard Pro · {ts}"
     )
