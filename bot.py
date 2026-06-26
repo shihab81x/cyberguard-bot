@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """
 ╔══════════════════════════════════════════════════════════╗
 ║            CyberGuard Pro  —  Telegram Bot               ║
@@ -6,7 +8,7 @@
 ╚══════════════════════════════════════════════════════════╝
 """
 
-import os, re, asyncio, base64, logging, socket, threading, time
+import io, os, re, asyncio, base64, logging, socket, threading, time
 from datetime import datetime, timezone
 from collections import defaultdict
 
@@ -16,6 +18,7 @@ from telegram import (
     Update, BotCommand, constants,
     InlineKeyboardButton, InlineKeyboardMarkup,
 )
+from telegram.constants import MessageEntityType
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler,
     CallbackQueryHandler, filters, ContextTypes,
@@ -33,30 +36,26 @@ logger = logging.getLogger("CyberGuard")
 # ══════════════════════════════════════════════════════════
 #  CONFIG  —  সব Render env vars দিয়ে override করা যাবে
 # ══════════════════════════════════════════════════════════
-BOT_TOKEN     = os.environ.get("BOT_TOKEN",     "8961784854:AAELWCP6aliyzDX3x0F2ohLTwd2FZSu2tAA")
-VT_KEY        = os.environ.get("VT_KEY",        "aa40f9a40b779d2e1684d10c11d23391538569ebc01a4fb82d62b9bfc5d157d0")
-AI_KEY        = os.environ.get("AI_KEY",        "AIzaSyBK4GFe8jIKccgM2eW2yVjxuVwdc3XVZvI")
-WORKER_SECRET = os.environ.get("WORKER_SECRET", "CyberGuardX2025")
+BOT_TOKEN     = os.environ.get("BOT_TOKEN",     "")
+VT_KEY        = os.environ.get("VT_KEY",        "")
+WORKER_SECRET = os.environ.get("WORKER_SECRET", "")
 WORKER_URL    = os.environ.get("WORKER_URL",    "")
 PORT          = int(os.environ.get("PORT",       8080))
+OPENAI_KEY    = os.environ.get("OPENAI_KEY",    "")
 
 # Google Safe Browsing — 2 keys rotation
+# Google Safe Browsing keys (rotate to spread quota)
 GOOGLE_KEYS = [
-    os.environ.get("GOOGLE_KEY1", "AIzaSyDV4BKDASUxA2OKvuPCjun-4_ABjLTxD6E"),
-    os.environ.get("GOOGLE_KEY2", "AIzaSyDHA8tCLwxdu3TB3YY91AkCJx-sJ89HQsg"),
+    os.environ.get("GOOGLE_KEY1", ""),
+    os.environ.get("GOOGLE_KEY2", ""),
 ]
 
-# URLScan.io — 2 keys rotation
+# URLScan.io keys (rotate to spread quota)
 URLSCAN_KEYS = [
-    os.environ.get("URLSCAN_KEY1", "019e2194-ea13-766f-bc24-285934b33d8b"),
-    os.environ.get("URLSCAN_KEY2", "019e2195-ad51-7728-bd17-b687a47f6aab"),
+    os.environ.get("URLSCAN_KEY1", ""),
+    os.environ.get("URLSCAN_KEY2", ""),
 ]
 
-
-AI_ENDPOINT = (
-    "https://generativelanguage.googleapis.com"
-    "/v1beta/models/gemini-1.5-flash-latest:generateContent"
-)
 
 # ══════════════════════════════════════════════════════════
 #  THREAT INTELLIGENCE LISTS
@@ -79,12 +78,14 @@ SKIP_SCAN_DOMAINS = {
     "twitter.com","x.com",
 }
 
+# TLDs historically associated with phishing / spam
 RISKY_TLDS = {
     ".site",".xyz",".top",".online",".club",".icu",".pw",".tk",".ml",
     ".cf",".ga",".gq",".info",".biz",".vip",".work",".rest",".fun",
     ".live",".world",".uno",".click",".loan",".win",".download",".stream",
 }
 
+# Keywords that boost risk score when present in URL
 SUSPICIOUS_KW = {
     "girl","sex","xxx","porn","adult","nude","naked","escort","paid",
     "onlyfan","leak","free-money","win-prize","login-verify","verify-now",
@@ -93,33 +94,100 @@ SUSPICIOUS_KW = {
 
 URL_RE = re.compile(
     r"(?:"
-    r"https?://[^\s<>\"']+|"                           # http:// বা https:// দিয়ে শুরু — সবসময় valid
-    r"(?<!\w)[a-zA-Z0-9\-]+\.[a-zA-Z]{2,6}(?:/[^\s]*)?"  # bare domain — শুধু word boundary তে
+    r"https?://[^\s<>\"']+|"
+    r"(?<!\w)[a-zA-Z0-9\-]+\.[a-zA-Z]{2,15}(?:/[^\s]*)?"
     r")"
 )
+
+# Domain validation regex
+DOMAIN_RE = re.compile(
+    r"^[a-z0-9]([a-z0-9\-]{0,61}[a-z0-9])?(\.[a-z]{2,})+$"
+)
+
+# Telegram message length limit
+TG_MSG_LIMIT = 4096
 
 # ══════════════════════════════════════════════════════════
 #  STATE
 # ══════════════════════════════════════════════════════════
 _stats   = {"scans": 0, "threats": 0, "started": datetime.now(timezone.utc)}
 _rate    = defaultdict(list)
-_gi = _ui = 0                # key rotation counters
+_gi = _ui = 0                # API key rotation counters
 
-RATE_LIMIT = 5               # per user per 60s
+# Locks for Flask threaded mode (race-condition safe)
+_stats_lock = threading.Lock()
+_rate_lock  = threading.Lock()
+_key_lock   = threading.Lock()
+
+RATE_LIMIT = 5               # requests per user per 60s
 
 def _check_rate(uid: int) -> bool:
+    """Sliding-window rate limiter — returns False if user is over limit."""
     now = time.time()
-    _rate[uid] = [t for t in _rate[uid] if now - t < 60]
-    if len(_rate[uid]) >= RATE_LIMIT:
-        return False
-    _rate[uid].append(now)
-    return True
+    with _rate_lock:
+        _rate[uid] = [t for t in _rate[uid] if now - t < 60]
+        if len(_rate[uid]) >= RATE_LIMIT:
+            return False
+        _rate[uid].append(now)
+        return True
 
-def _gkey() -> str:
-    global _gi; k = GOOGLE_KEYS[_gi % len(GOOGLE_KEYS)]; _gi += 1; return k
+async def _rate_cleanup():
+    """Drop idle users from _rate every 5 min to prevent unbounded growth."""
+    while True:
+        await asyncio.sleep(300)
+        now = time.time()
+        with _rate_lock:
+            stale = [uid for uid, ts in _rate.items() if not ts or now - ts[-1] > 300]
+            for uid in stale:
+                del _rate[uid]
+            if stale:
+                logger.info(f"Rate dict cleanup: removed {len(stale)} stale users")
 
-def _ukey() -> str:
-    global _ui; k = URLSCAN_KEYS[_ui % len(URLSCAN_KEYS)]; _ui += 1; return k
+def _escape_md(text: str) -> str:
+    """Escape Markdown special characters for legacy Markdown."""
+    return re.sub(r'([_*`\[])', r'\\\1', text)
+
+def _split_message(text: str, limit: int = TG_MSG_LIMIT - 100) -> list[str]:
+    """Split text into chunks that fit Telegram's 4096-char message limit."""
+    if len(text) <= limit:
+        return [text]
+    chunks = []
+    while text:
+        if len(text) <= limit:
+            chunks.append(text)
+            break
+        cut = text.rfind("\n", 0, limit)
+        if cut == -1 or cut < limit // 2:
+            cut = limit
+        
+        chunk = text[:cut]
+        if chunk.count("```") % 2 != 0:
+            last_fence = chunk.rfind("```")
+            if last_fence > 0:
+                cut = last_fence
+                chunk = text[:cut]
+        
+        chunks.append(chunk)
+        text = text[cut:].lstrip("\n")
+    return chunks
+
+def _gkey() -> str | None:
+    keys = [k for k in GOOGLE_KEYS if k]
+    if not keys: return None
+    global _gi
+    with _key_lock:
+        k = keys[_gi % len(keys)]
+        _gi += 1
+    return k
+
+def _ukey() -> str | None:
+    keys = [k for k in URLSCAN_KEYS if k]
+    if not keys: return None
+    global _ui
+    with _key_lock:
+        k = keys[_ui % len(keys)]
+        _ui += 1
+    return k
 
 # ══════════════════════════════════════════════════════════
 #  URL PARSING  —  entities ব্যবহার নেই, pure regex
@@ -135,35 +203,28 @@ VALID_TLDS = {
 }
 
 def _parse_url(text: str) -> tuple[str, str] | None:
-    """
-    Returns (full_url, domain) or None.
-    Handles https:// https:/// http:// domain.com etc.
-    """
+    """Extract first URL from text. Returns (full_url, domain) or None."""
     m = URL_RE.search(text.strip())
     if not m:
         return None
     raw = m.group(0).strip()
-    # Fix extra slashes: https:/// → https://
+    # Normalize accidental triple slashes (https:/// → https://)
     raw = re.sub(r"^(https?:)/{2,}", r"\1//", raw)
     full = raw if raw.startswith("http") else "https://" + raw
     domain = re.sub(r"^https?://", "", full).split("/")[0].split("?")[0].lower().strip(".")
     if not domain or "." not in domain:
         return None
-    # TLD check — fake word e.amake, e.Amake এরকম reject করো
     tld = domain.rsplit(".", 1)[-1].lower()
     if tld not in VALID_TLDS:
         return None
     return full, domain
 
 def _extract_url_from_message(text: str, entities=None) -> str | None:
-    """
-    Group message থেকে URL বের করো।
-    Entity → regex order।
-    """
+    """Extract URL — prefer Telegram entities, fall back to regex."""
     for ent in (entities or []):
-        if ent.type == "url":
+        if ent.type == MessageEntityType.URL:
             return text[ent.offset: ent.offset + ent.length]
-        if ent.type == "text_link":
+        if ent.type == MessageEntityType.TEXT_LINK:
             return ent.url
     m = URL_RE.search(text)
     return m.group(0) if m else None
@@ -171,8 +232,11 @@ def _extract_url_from_message(text: str, entities=None) -> str | None:
 # ══════════════════════════════════════════════════════════
 #  SCAN ENGINE 1 — VirusTotal
 # ══════════════════════════════════════════════════════════
-async def vt_scan(url: str) -> dict:
+async def vt_scan(url: str, _retry: int = 0) -> dict:
     out = {"malicious": 0, "suspicious": 0, "categories": [], "link": ""}
+    if not VT_KEY:
+        logger.warning("VT: no key configured")
+        return out
     try:
         uid = base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
         async with httpx.AsyncClient(timeout=15) as c:
@@ -180,6 +244,10 @@ async def vt_scan(url: str) -> dict:
                 f"https://www.virustotal.com/api/v3/urls/{uid}",
                 headers={"x-apikey": VT_KEY},
             )
+            if r.status_code == 429 and _retry < 1:
+                logger.warning("VT rate limited — backing off 60s")
+                await asyncio.sleep(60)
+                return await vt_scan(url, _retry=_retry + 1)
             if r.status_code == 200:
                 a = r.json()["data"]["attributes"]
                 s = a.get("last_analysis_stats", {})
@@ -198,6 +266,9 @@ async def vt_scan(url: str) -> dict:
 # ══════════════════════════════════════════════════════════
 async def google_sb(url: str) -> bool:
     key = _gkey()
+    if not key:
+        logger.warning("GSB: no key configured")
+        return False
     try:
         async with httpx.AsyncClient(timeout=12) as c:
             r = await c.post(
@@ -225,12 +296,16 @@ async def google_sb(url: str) -> bool:
 # ══════════════════════════════════════════════════════════
 async def urlscan(url: str) -> tuple:
     key = _ukey()
+    if not key:
+        logger.warning("URLScan: no key configured")
+        return None, 0
     try:
-        async with httpx.AsyncClient(timeout=35) as c:
+        # 60s timeout covers the 20s sandbox wait + 2 API calls
+        async with httpx.AsyncClient(timeout=60) as c:
             r = await c.post(
                 "https://urlscan.io/api/v1/scan/",
                 headers={"API-Key": key, "Content-Type": "application/json"},
-                json={"url": url, "visibility": "private"},
+                json={"url": url, "visibility": "public"},
             )
             uuid = r.json().get("uuid")
             if not uuid:
@@ -248,7 +323,7 @@ async def urlscan(url: str) -> tuple:
 # ══════════════════════════════════════════════════════════
 async def take_screenshot(url: str) -> str | None:
 
-    # Provider 1: Microlink (free, no API key needed)
+    # Provider 1: Microlink
     try:
         async with httpx.AsyncClient(timeout=45, follow_redirects=True) as c:
             r = await c.get(
@@ -256,9 +331,9 @@ async def take_screenshot(url: str) -> str | None:
                 params={
                     "url":                  url,
                     "screenshot":           "true",
-                    "screenshot.fullPage":  "true",   # full page scroll screenshot
-                    "waitUntil":            "networkidle2",  # পেজ পুরো load হওয়া পর্যন্ত অপেক্ষা
-                    "waitForTimeout":       "3000",    # extra 3s JS render এর জন্য
+                    "screenshot.fullPage":  "true",
+                    "waitUntil":            "networkidle2",
+                    "waitForTimeout":       "3000",
                     "meta":                 "false",
                 },
             )
@@ -300,7 +375,7 @@ async def check_headers(url: str) -> dict:
             for h in checks:
                 if h.lower() in {k.lower() for k in r.headers}:
                     checks[h] = "✅"
-    except:
+    except Exception:
         pass
     return checks
 
@@ -317,7 +392,7 @@ async def dns_lookup(domain: str) -> dict:
                     params={"name": domain, "type": rt},
                 )
                 info[rt] = [a["data"] for a in r.json().get("Answer", [])[:3]]
-    except:
+    except Exception:
         pass
     return info
 
@@ -334,64 +409,65 @@ async def whois_lookup(domain: str) -> dict:
                     "expires":   d.get("expiry_date",        "N/A"),
                     "country":   d.get("registrant_country", "N/A"),
                 }
-    except:
+    except Exception:
         pass
     return info
 
 # ══════════════════════════════════════════════════════════
-#  AI ENGINE — Gemini 1.5 Flash
+#  AI ENGINE — OpenAI / ChatAnywhere
 # ══════════════════════════════════════════════════════════
 _SYSTEM = (
     "You are CyberGuard AI — elite cybersecurity analyst. "
     "Give concise 2-3 sentence technically precise actionable assessments. "
     "No greetings. No disclaimers. Pure signal only."
 )
-_SAFETY = [
-    {"category": c, "threshold": "BLOCK_NONE"}
-    for c in [
-        "HARM_CATEGORY_HARASSMENT", "HARM_CATEGORY_HATE_SPEECH",
-        "HARM_CATEGORY_SEXUALLY_EXPLICIT", "HARM_CATEGORY_DANGEROUS_CONTENT",
-    ]
-]
 
-async def _gemini(prompt: str, max_tokens: int = 350) -> str | None:
-    models = [
-        "gemini-2.5-pro",           # 🔥 Best — primary
-        "gemini-2.5-flash",         # fast fallback
-        "gemini-2.0-flash",         # older fallback
-    ]
-    for model in models:
-        try:
-            async with httpx.AsyncClient(timeout=25) as c:
-                r = await c.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models"
-                    f"/{model}:generateContent?key={AI_KEY}",
-                    json={
-                        "system_instruction": {"parts": [{"text": _SYSTEM}]},
-                        "contents":           [{"parts": [{"text": prompt}]}],
-                        "safetySettings":     _SAFETY,
-                        "generationConfig":   {"temperature": 0.2, "maxOutputTokens": max_tokens},
-                    },
-                )
-                data = r.json()
-                if "candidates" in data:
-                    logger.info(f"Gemini ✅ model={model}")
-                    return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-                else:
-                    logger.warning(f"Gemini {model} no candidates: {data}")
-        except Exception as e:
-            logger.warning(f"Gemini {model} error: {e}")
+OPENAI_BASE  = os.environ.get("OPENAI_BASE",  "https://openrouter.ai/api/v1")
+OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "openai/gpt-oss-120b:free")
+
+async def _ai(prompt: str, max_tokens: int = 350) -> str | None:
+    if not OPENAI_KEY:
+        logger.warning("OPENAI_KEY not set — AI disabled")
+        return None
+    try:
+        async with httpx.AsyncClient(timeout=25) as c:
+            r = await c.post(
+                f"{OPENAI_BASE}/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENAI_KEY}",
+                    "Content-Type":  "application/json",
+                    "HTTP-Referer":  "https://cyberguard-bot.onrender.com",
+                    "X-Title":       "CyberGuard Pro",
+                },
+                json={
+                    "model":       OPENAI_MODEL,
+                    "messages":    [
+                        {"role": "system", "content": _SYSTEM},
+                        {"role": "user",   "content": prompt},
+                    ],
+                    "max_tokens":  max_tokens,
+                    "temperature": 0.2,
+                },
+            )
+            data = r.json()
+            if "choices" in data:
+                logger.info(f"AI ✅ model={OPENAI_MODEL}")
+                return data["choices"][0]["message"]["content"].strip()
+            else:
+                logger.warning(f"AI no choices: {data}")
+    except Exception as e:
+        logger.warning(f"AI error: {e}")
     return None
 
 async def ai_url_insight(domain, vt, gs, us_score, risk) -> str:
-    r = await _gemini(
+    r = await _ai(
         f"Domain: {domain}\n"
         f"VirusTotal: {vt['malicious']} malicious / {vt['suspicious']} suspicious\n"
         f"Google Safe Browsing: {'THREAT DETECTED' if gs else 'clean'}\n"
         f"Sandbox score: {us_score}/100  |  Aggregate risk: {risk}%\n"
         f"Categories: {', '.join(vt['categories']) or 'unknown'}\n"
         f"Write a 2-3 sentence technical security assessment. Always complete your sentences fully.",
-        max_tokens=300,   # আগে default ছিল, এখন explicit — truncate হবে না
+        max_tokens=300,
     )
     if r: return r
     if risk >= 60: return "High-confidence threat across multiple intelligence feeds. Avoid and escalate immediately."
@@ -399,14 +475,16 @@ async def ai_url_insight(domain, vt, gs, us_score, risk) -> str:
     return "No active threats detected. Maintain standard security hygiene."
 
 async def ai_qa(question: str) -> str:
-    r = await _gemini(question, max_tokens=450)
+    r = await _ai(question, max_tokens=450)
     return r or "⚠️ AI engine temporarily unavailable."
 
 # ══════════════════════════════════════════════════════════
 #  RISK SCORING
 # ══════════════════════════════════════════════════════════
 def calc_risk(vt, gs, us_score, domain, full_url) -> tuple[int, list]:
-    if any(d in domain for d in TRUSTED_DOMAINS):
+    """Aggregate risk score (0-100). Trusted domains always score 0."""
+    # Use exact match + subdomain suffix to avoid "evil-google.com" bypassing trust
+    if any(domain == d or domain.endswith("." + d) for d in TRUSTED_DOMAINS):
         return 0, []
 
     tld      = "." + domain.rsplit(".", 1)[-1] if "." in domain else ""
@@ -452,17 +530,14 @@ async def _animate(msg):
                 parse_mode="Markdown",
             )
             await asyncio.sleep(3)
-        except:
+        except Exception:
             break
 
 # ══════════════════════════════════════════════════════════
 #  CORE SCAN — সব কিছু এখানে
 # ══════════════════════════════════════════════════════════
 async def _scan_core(u: Update, url_input: str):
-    """
-    একমাত্র scan entry point।
-    cmd_check ও handle_text দুটোই এটা call করে।
-    """
+    """Main scan pipeline — invoked by /check command and group text handler."""
     if not _check_rate(u.effective_user.id):
         await u.message.reply_text("⏳ Too many requests! Wait 60 seconds.")
         return
@@ -474,7 +549,7 @@ async def _scan_core(u: Update, url_input: str):
 
     full_url, domain = parsed
 
-    # Verified platform হলে scan skip করো (group + private + /check সব জায়গায়)
+    # Skip scan for verified platforms (messaging, social, video)
     base = domain.replace("www.", "")
     if any(base == s or base.endswith("." + s) for s in SKIP_SCAN_DOMAINS):
         await u.message.reply_text(
@@ -492,7 +567,7 @@ async def _scan_core(u: Update, url_input: str):
     status = await u.message.reply_text("📡 *Initialising CyberGuard...*", parse_mode="Markdown")
     anim   = asyncio.create_task(_animate(status))
 
-    # সব engine একসাথে — concurrent users এ কোনো blocking নেই
+    # সব engine একসাথে — concurrent
     vt, gs, (us_shot, us_score), shot = await asyncio.gather(
         vt_scan(full_url),
         google_sb(full_url),
@@ -502,9 +577,11 @@ async def _scan_core(u: Update, url_input: str):
     anim.cancel()
 
     risk, flags = calc_risk(vt, gs, us_score, domain, full_url)
-    _stats["scans"] += 1
-    if risk >= 60:
-        _stats["threats"] += 1
+
+    with _stats_lock:
+        _stats["scans"] += 1
+        if risk >= 60:
+            _stats["threats"] += 1
 
     insight = await ai_url_insight(domain, vt, gs, us_score, risk)
 
@@ -514,7 +591,7 @@ async def _scan_core(u: Update, url_input: str):
         "🟢 *SAFE*"
     )
     filled  = risk // 10
-    bar     = ("#" * filled) + ("-" * (10 - filled))   # pure ASCII — সব device এ কাজ করে
+    bar     = ("#" * filled) + ("-" * (10 - filled))
     ts      = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
     report = (
@@ -533,8 +610,7 @@ async def _scan_core(u: Update, url_input: str):
         report += f"  • Category     `{', '.join(vt['categories'])}`\n"
     if flags:
         report += "\n🚩 *Risk Flags:*\n" + "".join(f"  {f}\n" for f in flags)
-    # italic wrap সরালাম — domain/url থাকলে Telegram parse ভাঙে
-    insight_clean = insight.strip()
+    insight_clean = _escape_md(insight.strip())
     report += (
         f"\n🤖 *AI Insight:*\n{insight_clean}\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
@@ -547,33 +623,116 @@ async def _scan_core(u: Update, url_input: str):
 
     try:
         await status.delete()
-    except:
+    except Exception:
         pass
 
-    # Screenshot: URLScan (risky site) অথবা Microlink/thum.io (সব site)
     final_shot = (us_shot if us_shot and risk >= 21 else None) or shot
 
     if final_shot:
         try:
-            import io
             async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
                 img_r = await c.get(final_shot)
             if img_r.status_code == 200 and "image" in img_r.headers.get("content-type", ""):
+                short_caption = (
+                    f"🛡️ *CyberGuard Report*\n"
+                    f"🌐 `{domain}`\n"
+                    f"🏁 {verdict} · `{risk}%`\n"
+                )
                 await u.message.reply_photo(
                     photo=io.BytesIO(img_r.content),
-                    caption=report,
+                    caption=short_caption,
                     parse_mode=constants.ParseMode.MARKDOWN,
-                    reply_markup=kb,
                 )
+                
+                chunks = _split_message(report)
+                for i, chunk in enumerate(chunks):
+                    is_last = (i == len(chunks) - 1)
+                    await u.message.reply_text(
+                        chunk, 
+                        parse_mode="Markdown", 
+                        reply_markup=kb if is_last else None
+                    )
                 return
         except Exception as e:
             logger.warning(f"Photo send failed: {e}")
 
-    await u.message.reply_text(report, parse_mode="Markdown", reply_markup=kb)
+    # Split long reports to fit Telegram's 4096-char limit
+    chunks = _split_message(report)
+    for i, chunk in enumerate(chunks):
+        is_last = (i == len(chunks) - 1)
+        await u.message.reply_text(
+            chunk, 
+            parse_mode="Markdown", 
+            reply_markup=kb if is_last else None
+        )
 
 # ══════════════════════════════════════════════════════════
 #  COMMAND HANDLERS
 # ══════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════
+#  GITHUB CODE REVIEW COMMAND
+# ══════════════════════════════════════════════════════════
+async def cmd_github(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/github <url> — AI security review of a GitHub raw file."""
+    if not ctx.args:
+        await u.message.reply_text(
+            "❗ *Usage:* `/github <raw_url>`\n\n"
+            "📌 *Example:*\n"
+            "`/github https://raw.githubusercontent.com/user/repo/main/bot.py`\n\n"
+            "💡 GitHub e file open kore *Raw* button press kore URL copy koro.",
+            parse_mode="Markdown",
+        )
+        return
+
+    raw_url = ctx.args[0].strip()
+
+    # Auto-convert github.com/blob or /raw URLs to raw.githubusercontent.com
+    if "github.com" in raw_url and "raw.githubusercontent.com" not in raw_url:
+        raw_url = re.sub(
+            r"github\.com/([^/]+)/([^/]+)/(blob|raw)/",
+            r"raw.githubusercontent.com/\1/\2/",
+            raw_url,
+        )
+
+    msg = await u.message.reply_text("🔍 `Fetching code from GitHub...`", parse_mode="Markdown")
+
+    try:
+        # File size limit: 50KB to prevent memory abuse
+        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
+            r = await c.get(raw_url)
+        if r.status_code != 200:
+            await msg.edit_text(f"❌ Code fetch failed — HTTP {r.status_code}")
+            return
+        if len(r.content) > 50_000:
+            await msg.edit_text("❌ File too large (max 50KB)")
+            return
+
+        code = r.text[:3000]
+        lang = raw_url.rsplit(".", 1)[-1] if "." in raw_url else "code"
+
+    except Exception as e:
+        await msg.edit_text(f"❌ Fetch error: `{e}`", parse_mode="Markdown")
+        return
+
+    await msg.edit_text("🤖 `AI reviewing code...`", parse_mode="Markdown")
+
+    review = await _ai(
+        f"Review this {lang} code for security vulnerabilities, bugs, and improvements.\n"
+        f"Be concise — max 5 bullet points. Focus on: security issues, critical bugs, quick wins.\n\n"
+        f"```\n{code}\n```",
+        max_tokens=500,
+    )
+
+    await msg.edit_text(
+        f"🔬 *GitHub Code Review*\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📁 `{raw_url.split('/')[-1]}`\n\n"
+        f"{review or '⚠️ AI review unavailable.'}\n\n"
+        f"━━━━━━━━━━━━━━━━━━━━━\n"
+        f"⚡ CyberGuard Code Review",
+        parse_mode="Markdown",
+    )
 
 async def cmd_start(u: Update, _):
     kb = InlineKeyboardMarkup([[
@@ -590,12 +749,13 @@ async def cmd_start(u: Update, _):
         "• `/whois <domain>` — WHOIS info\n"
         "• `/ip <address>` — IP check\n"
         "• `/headers <url>` — Security headers\n"
+        "• `/github <url>` — AI code review\n"
         "• `/ask <question>` — AI expert\n"
         "• `/ping` — Latency check\n"
         "• `/stats` — Scan statistics\n\n"
         "💡 *Group এ যেকোনো link পাঠালে auto-scan হবে!*\n"
         "━━━━━━━━━━━━━━━━━━━━━\n"
-        "⚡ VT · Google SB · URLScan · Gemini AI",
+        "⚡ VT · Google SB · URLScan · OpenAI",
         parse_mode="Markdown",
         reply_markup=kb,
     )
@@ -614,6 +774,8 @@ async def cmd_help(u: Update, _):
         "Hostname + PTR record\n\n"
         "🔒 `/headers <url>`\n"
         "HTTP security headers audit (A–F grade)\n\n"
+        "🐙 `/github <raw_url>`\n"
+        "AI-powered code security review\n\n"
         "🤖 `/ask <question>`\n"
         "AI cybersecurity Q&A\n\n"
         "🏓 `/ping` — Response latency\n"
@@ -645,12 +807,16 @@ async def cmd_ping(u: Update, _):
     )
 
 async def cmd_stats(u: Update, _):
-    up = int((datetime.now(timezone.utc) - _stats["started"]).total_seconds() // 3600)
+    with _stats_lock:
+        scans   = _stats["scans"]
+        threats = _stats["threats"]
+        started = _stats["started"]
+    up = int((datetime.now(timezone.utc) - started).total_seconds() // 3600)
     await u.message.reply_text(
         f"📊 *CyberGuard Stats*\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔍 Total Scans:   `{_stats['scans']}`\n"
-        f"🚨 Threats Found: `{_stats['threats']}`\n"
+        f"🔍 Total Scans:   `{scans}`\n"
+        f"🚨 Threats Found: `{threats}`\n"
         f"⏱️ Uptime:        `{up}h`\n"
         f"━━━━━━━━━━━━━━━━━━━━━",
         parse_mode="Markdown",
@@ -667,6 +833,8 @@ async def cmd_dns(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
         await u.message.reply_text("❗ Usage: `/dns <domain>`", parse_mode="Markdown"); return
     domain = ctx.args[0].lower().strip()
+    if not DOMAIN_RE.match(domain):
+        await u.message.reply_text("❌ Invalid domain format", parse_mode="Markdown"); return
     msg    = await u.message.reply_text(f"🔍 `Resolving {domain}...`", parse_mode="Markdown")
     d      = await dns_lookup(domain)
     def fmt(lst): return "".join(f"  `{x}`\n" for x in lst) or "  `—`\n"
@@ -684,6 +852,8 @@ async def cmd_whois(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
         await u.message.reply_text("❗ Usage: `/whois <domain>`", parse_mode="Markdown"); return
     domain = ctx.args[0].lower().strip()
+    if not DOMAIN_RE.match(domain):
+        await u.message.reply_text("❌ Invalid domain format", parse_mode="Markdown"); return
     msg    = await u.message.reply_text(f"🔍 `WHOIS {domain}...`", parse_mode="Markdown")
     d      = await whois_lookup(domain)
     await msg.edit_text(
@@ -699,16 +869,36 @@ async def cmd_whois(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def cmd_ip(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not ctx.args:
         await u.message.reply_text("❗ Usage: `/ip <address>`", parse_mode="Markdown"); return
-    ip       = ctx.args[0].strip()
-    msg      = await u.message.reply_text(f"🔍 `Analysing {ip}...`", parse_mode="Markdown")
-    hostname = "N/A"
-    try: hostname = socket.gethostbyaddr(ip)[0]
-    except: pass
-    d = await dns_lookup(ip)
+    ip = ctx.args[0].strip()
+    if not re.match(r"^\d{1,3}(\.\d{1,3}){3}$", ip):
+        await u.message.reply_text("❌ Invalid IP address", parse_mode="Markdown"); return
+    
+    msg = await u.message.reply_text(f"🔍 `Analysing {ip}...`", parse_mode="Markdown")
+    
+    ptr = "N/A"
+    try:
+        ptr = socket.gethostbyaddr(ip)[0]
+    except Exception:
+        pass
+    
+    ip_info = {"country": "N/A", "org": "N/A"}
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"https://ipinfo.io/{ip}/json")
+            if r.status_code == 200:
+                d = r.json()
+                ip_info = {
+                    "country": d.get("country", "N/A"),
+                    "org": d.get("org", "N/A"),
+                }
+    except Exception:
+        pass
+    
     await msg.edit_text(
         f"🖥️ *IP — {ip}*\n━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🔀 *Hostname:* `{hostname}`\n"
-        f"📡 *PTR:*      `{d['A'][0] if d['A'] else 'N/A'}`\n"
+        f"🔀 *Hostname:* `{ptr}`\n"
+        f"🌍 *Country:*  `{ip_info['country']}`\n"
+        f"🏢 *Org:*      `{ip_info['org']}`\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n⚡ CyberGuard IP",
         parse_mode="Markdown",
     )
@@ -739,7 +929,7 @@ async def cmd_ask(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     await msg.edit_text(
         f"🤖 *CyberGuard AI Expert*\n━━━━━━━━━━━━━━━━━━━━━\n"
         f"❓ _{q}_\n\n{ans}\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n⚡ Gemini 1.5 Flash",
+        f"━━━━━━━━━━━━━━━━━━━━━\n⚡ CyberGuard AI",
         parse_mode="Markdown",
     )
 
@@ -750,17 +940,15 @@ async def handle_text(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     if not u.message or not u.message.text:
         return
 
-    text      = u.message.text.strip()
-    chat_type = u.message.chat.type
-    is_group  = chat_type in (constants.ChatType.GROUP, constants.ChatType.SUPERGROUP)
+    text       = u.message.text.strip()
+    chat_type  = u.message.chat.type
+    is_group   = chat_type in (constants.ChatType.GROUP, constants.ChatType.SUPERGROUP)
     is_private = chat_type == constants.ChatType.PRIVATE
 
     if is_group:
-        # Entity দিয়ে link খোঁজো (সবচেয়ে accurate)
         found = _extract_url_from_message(text, u.message.entities)
         if not found:
-            return  # normal text → চুপ থাকো
-        # Telegram/social app internal link হলে scan করবো না
+            return
         parsed = _parse_url(found)
         if parsed:
             _, domain = parsed
@@ -780,11 +968,10 @@ async def handle_text(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
         await _scan_core(u, found)
 
     elif is_private:
-        # URL হলে scan, না হলে AI expert
         if URL_RE.search(text):
             await _scan_core(u, text)
         else:
-            u.message.text = "/ask " + text
+            # Plain text in private chat → treat as AI question
             await cmd_ask(u, ctx)
 
 async def handle_callback(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
@@ -804,6 +991,8 @@ async def handle_callback(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "Hostname + PTR record\n\n"
             "🔒 `/headers <url>`\n"
             "HTTP security headers audit (A–F grade)\n\n"
+            "🐙 `/github <raw_url>`\n"
+            "AI-powered code security review\n\n"
             "🤖 `/ask <question>`\n"
             "AI cybersecurity Q&A\n\n"
             "🏓 `/ping` — Response latency\n"
@@ -813,12 +1002,16 @@ async def handle_callback(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown",
         )
     elif q.data == "stats":
-        up = int((datetime.now(timezone.utc) - _stats["started"]).total_seconds() // 3600)
+        with _stats_lock:
+            scans   = _stats["scans"]
+            threats = _stats["threats"]
+            started = _stats["started"]
+        up = int((datetime.now(timezone.utc) - started).total_seconds() // 3600)
         await q.message.reply_text(
             f"📊 *CyberGuard Stats*\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"🔍 Total Scans:   `{_stats['scans']}`\n"
-            f"🚨 Threats Found: `{_stats['threats']}`\n"
+            f"🔍 Total Scans:   `{scans}`\n"
+            f"🚨 Threats Found: `{threats}`\n"
             f"⏱️ Uptime:        `{up}h`\n"
             f"━━━━━━━━━━━━━━━━━━━━━",
             parse_mode="Markdown",
@@ -830,11 +1023,13 @@ async def handle_callback(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
 _COMMANDS = [
     BotCommand("start",   "Welcome & command list"),
     BotCommand("check",   "Full URL threat scan"),
+    BotCommand("scan",    "Full URL threat scan"),
     BotCommand("dns",     "DNS record lookup"),
     BotCommand("whois",   "Domain WHOIS info"),
     BotCommand("ip",      "IP reputation check"),
     BotCommand("headers", "HTTP security headers"),
     BotCommand("ask",     "Ask AI security expert"),
+    BotCommand("github",  "AI code review from GitHub"),
     BotCommand("ping",    "Bot latency check"),
     BotCommand("stats",   "Scan statistics"),
     BotCommand("help",    "Help menu"),
@@ -850,6 +1045,7 @@ def _register(app):
     app.add_handler(CommandHandler("ip",      cmd_ip))
     app.add_handler(CommandHandler("headers", cmd_headers))
     app.add_handler(CommandHandler("ask",     cmd_ask))
+    app.add_handler(CommandHandler("github",  cmd_github))
     app.add_handler(CommandHandler("ping",    cmd_ping))
     app.add_handler(CommandHandler("stats",   cmd_stats))
     app.add_handler(CallbackQueryHandler(handle_callback))
@@ -868,15 +1064,20 @@ def _run_loop():
 
 async def _boot_webhook():
     global _ptb_app
-    _ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
-    _register(_ptb_app)
-    await _ptb_app.initialize()
-    await _ptb_app.start()
-    wh = f"{WORKER_URL.rstrip('/')}/telegram"
-    await _ptb_app.bot.set_webhook(url=wh, secret_token=WORKER_SECRET)
-    await _ptb_app.bot.set_my_commands(_COMMANDS)
-    logger.info(f"Webhook → {wh}")
-    logger.info("CyberGuard Pro ready ✅")
+    try:
+        _ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
+        _register(_ptb_app)
+        await _ptb_app.initialize()
+        await _ptb_app.start()
+        wh = f"{WORKER_URL.rstrip('/')}/telegram"
+        await _ptb_app.bot.set_webhook(url=wh, secret_token=WORKER_SECRET)
+        await _ptb_app.bot.set_my_commands(_COMMANDS)
+        logger.info(f"Webhook → {wh}")
+        logger.info("CyberGuard Pro ready ✅")
+        asyncio.create_task(_rate_cleanup())
+    except Exception as e:
+        logger.error(f"Boot failed: {e}")
+        raise
 
 @flask_app.route("/", methods=["GET"])
 def health():
@@ -886,11 +1087,17 @@ def health():
 def tg_webhook():
     if request.headers.get("X-Worker-Secret", "") != WORKER_SECRET:
         return Response("Forbidden", status=403)
+    if _ptb_app is None or _ptb_app.bot is None:
+        return Response("Bot initializing, retry later", status=503)
     data = request.get_json(force=True, silent=True)
     if not data:
         return Response("Bad Request", status=400)
-    update = Update.de_json(data, _ptb_app.bot)
-    asyncio.run_coroutine_threadsafe(_ptb_app.process_update(update), _event_loop)
+    try:
+        update = Update.de_json(data, _ptb_app.bot)
+        asyncio.run_coroutine_threadsafe(_ptb_app.process_update(update), _event_loop)
+    except Exception as e:
+        logger.error(f"Webhook processing failed: {e}")
+        return Response("Internal error", status=500)
     return Response("ok", status=200)
 
 # ══════════════════════════════════════════════════════════
@@ -898,7 +1105,11 @@ def tg_webhook():
 # ══════════════════════════════════════════════════════════
 if __name__ == "__main__":
     if WORKER_URL:
-        # ── Webhook mode (Cloudflare Worker আছে) ──
+        # Webhook mode requires WORKER_SECRET to verify incoming requests
+        if not WORKER_SECRET:
+            logger.error("❌ WORKER_SECRET env var must be set in webhook mode! Exiting.")
+            raise SystemExit(1)
+
         logger.info("Starting webhook mode...")
         threading.Thread(target=_run_loop, daemon=True).start()
         asyncio.run_coroutine_threadsafe(_boot_webhook(), _event_loop).result(timeout=30)
@@ -909,6 +1120,7 @@ if __name__ == "__main__":
 
         async def _post_init(app):
             await app.bot.set_my_commands(_COMMANDS)
+            asyncio.create_task(_rate_cleanup())
 
         poll = ApplicationBuilder().token(BOT_TOKEN).build()
         poll.post_init = _post_init
