@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="https://i.ibb.co.com/XfC54RkC/robot-data-phishing-cyber-attack-cloud-security-identity-theft--illustration-svg-download-pn.png" alt="CyberGuard Pro" width="480"/>
+<img src="https://i.ibb.co.com/XfC54RkC/robot-data-phishing-cyber-attack-cloud-security-identity-theft-password-illustration-svg-download-pn.png" alt="CyberGuard Pro" width="480"/>
 
 # 🛡️ CyberGuard Pro
 
@@ -11,6 +11,7 @@
 [![Render](https://img.shields.io/badge/Deploy-Render-000000?logo=render&logoColor=white)](https://render.com)
 [![Cloudflare Workers](https://img.shields.io/badge/Worker-Cloudflare-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
 [![MIT License](https://img.shields.io/badge/License-MIT-2ea44f)](LICENSE)
+[![GitHub](https://img.shields.io/badge/GitHub-shihab81x%2Fcyberguard--bot-181717?logo=github&logoColor=white)](https://github.com/shihab81x/cyberguard-bot)
 
 *Multi-API Rotation · Concurrent Users · RAM Optimized · Group Auto-Scan · Anti-Spam Moderation*
 
@@ -31,7 +32,6 @@
 | 📋 **WHOIS** | Registrar, creation/expiry date, country |
 | 🖥️ **IP Check** | Reverse DNS + ipinfo.io geo-location + organization |
 | 🔒 **Headers Audit** | HSTS, CSP, X-Frame-Options, X-Content-Type — A–F grade |
-| 🐙 **GitHub Review** | AI-powered code security review from raw URLs |
 | 🔄 **Auto-Scan** | Group এ link paste করলে automatic scan — command লাগবে না |
 | ⚡ **API Rotation** | Multiple Google/URLScan keys — quota evenly distributed |
 | 🛑 **Rate Limiting** | Per-user sliding window (5 req / 60s) |
@@ -52,7 +52,7 @@
 /whois <domain>  WHOIS registration info
 /ip <address>    IP reputation & geo check
 /headers <url>   HTTP security headers audit (A–F grade)
-/github <url>    AI code security review from GitHub raw URL
+/github          View CyberGuard Pro source code repository
 /ask <question>  AI cybersecurity expert Q&A
 /ping            Bot latency check
 /stats           Total scans & threats found
@@ -60,6 +60,8 @@
 ```
 
 > 💡 **Group এ যেকোনো link পাঠালে auto-scan হবে — কোনো command লাগবে না!**
+
+> 🔗 **Source Code → [github.com/shihab81x/cyberguard-bot](https://github.com/shihab81x/cyberguard-bot)**
 
 ---
 
