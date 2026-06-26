@@ -24,6 +24,8 @@ from telegram.ext import (
     CallbackQueryHandler, filters, ContextTypes,
 )
 
+import zbot  #
+
 # ══════════════════════════════════════════════════════════
 #  LOGGING
 # ══════════════════════════════════════════════════════════
@@ -671,67 +673,27 @@ async def _scan_core(u: Update, url_input: str):
 # ══════════════════════════════════════════════════════════
 
 # ══════════════════════════════════════════════════════════
-#  GITHUB CODE REVIEW COMMAND
+#  GITHUB REPO COMMAND
 # ══════════════════════════════════════════════════════════
 async def cmd_github(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/github <url> — AI security review of a GitHub raw file."""
-    if not ctx.args:
-        await u.message.reply_text(
-            "❗ *Usage:* `/github <raw_url>`\n\n"
-            "📌 *Example:*\n"
-            "`/github https://raw.githubusercontent.com/user/repo/main/bot.py`\n\n"
-            "💡 GitHub e file open kore *Raw* button press kore URL copy koro.",
-            parse_mode="Markdown",
-        )
-        return
-
-    raw_url = ctx.args[0].strip()
-
-    # Auto-convert github.com/blob or /raw URLs to raw.githubusercontent.com
-    if "github.com" in raw_url and "raw.githubusercontent.com" not in raw_url:
-        raw_url = re.sub(
-            r"github\.com/([^/]+)/([^/]+)/(blob|raw)/",
-            r"raw.githubusercontent.com/\1/\2/",
-            raw_url,
-        )
-
-    msg = await u.message.reply_text("🔍 `Fetching code from GitHub...`", parse_mode="Markdown")
-
-    try:
-        # File size limit: 50KB to prevent memory abuse
-        async with httpx.AsyncClient(timeout=20, follow_redirects=True) as c:
-            r = await c.get(raw_url)
-        if r.status_code != 200:
-            await msg.edit_text(f"❌ Code fetch failed — HTTP {r.status_code}")
-            return
-        if len(r.content) > 50_000:
-            await msg.edit_text("❌ File too large (max 50KB)")
-            return
-
-        code = r.text[:3000]
-        lang = raw_url.rsplit(".", 1)[-1] if "." in raw_url else "code"
-
-    except Exception as e:
-        await msg.edit_text(f"❌ Fetch error: `{e}`", parse_mode="Markdown")
-        return
-
-    await msg.edit_text("🤖 `AI reviewing code...`", parse_mode="Markdown")
-
-    review = await _ai(
-        f"Review this {lang} code for security vulnerabilities, bugs, and improvements.\n"
-        f"Be concise — max 5 bullet points. Focus on: security issues, critical bugs, quick wins.\n\n"
-        f"```\n{code}\n```",
-        max_tokens=500,
-    )
-
-    await msg.edit_text(
-        f"🔬 *GitHub Code Review*\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"📁 `{raw_url.split('/')[-1]}`\n\n"
-        f"{review or '⚠️ AI review unavailable.'}\n\n"
-        f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"⚡ CyberGuard Code Review",
-        parse_mode="Markdown",
+    """/github — Show CyberGuard Pro source code repository."""
+    await u.message.reply_text(
+        "🛡️ *CyberGuard Pro — Source Code*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "📦 *Repository:* `cyberguard-bot`\n"
+        "👨‍💻 *Developer:* `shihab81x`\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n\n"
+        "📂 *Main Files*\n\n"
+        "[🤖 bot\\-2\\-1\\.py](https://github.com/shihab81x/cyberguard-bot/blob/main/bot-2-1.py)      "
+        "[🛡️ zbot\\.py](https://github.com/shihab81x/cyberguard-bot/blob/main/zbot.py)\n\n"
+        "[📋 requirements\\.txt](https://github.com/shihab81x/cyberguard-bot/blob/main/requirements.txt)      "
+        "[⚙️ Procfile](https://github.com/shihab81x/cyberguard-bot/blob/main/Procfile)\n\n"
+        "[📖 README\\.md](https://github.com/shihab81x/cyberguard-bot/blob/main/README.md)\n\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "[🔗 View Full Repository](https://github.com/shihab81x/cyberguard-bot/tree/main)\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "⚡ CyberGuard Pro",
+        parse_mode="MarkdownV2",
     )
 
 async def cmd_start(u: Update, _):
@@ -1050,6 +1012,7 @@ def _register(app):
     app.add_handler(CommandHandler("stats",   cmd_stats))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    zbot.register_handlers(app)
 
 # ══════════════════════════════════════════════════════════
 #  FLASK  (webhook receiver + health check)
@@ -1066,6 +1029,7 @@ async def _boot_webhook():
     global _ptb_app
     try:
         _ptb_app = ApplicationBuilder().token(BOT_TOKEN).build()
+        zbot.init_db()
         _register(_ptb_app)
         await _ptb_app.initialize()
         await _ptb_app.start()
