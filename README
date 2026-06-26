@@ -1,5 +1,4 @@
 
-```markdown
 <div align="center">
 
 <img src="https://i.ibb.co.com/XfC54RkC/robot-data-phishing-cyber-attack-cloud-security-identity-theft-password-illustration-svg-download-pn.png" alt="CyberGuard Pro" width="480"/>
@@ -9,14 +8,14 @@
 **Elite Threat Intelligence Telegram Bot**
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue?logo=python&logoColor=white)](https://python.org)
-[![Telegram](https://img.shields.io/badge/Telegram-Bot-26A5E4?logo=telegram&logoColor=white)](https://telegram.org)
+[![Telegram](https://img.shields.io/badge/Telegram-@CyberGuardAnalyzer__bot-blue?logo=telegram&logoColor=white)](https://t.me/CyberGuardAnalyzer_bot)
 [![Render](https://img.shields.io/badge/Deploy-Render-000000?logo=render&logoColor=white)](https://render.com)
 [![Cloudflare](https://img.shields.io/badge/Worker-Cloudflare-F38020?logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
 
-*Multi-API Rotation · Concurrent Users · RAM Optimized · Group Auto-Scan*
+*Multi-API Rotation · Concurrent Users · RAM Optimized · Group Auto-Scan · Anti-Spam Moderation*
 
-[Features](#-features) · [Commands](#-commands) · [Setup](#-setup) · [Environment](#-environment-variables) · [Architecture](#-architecture) · [Deploy](#-deployment)
+[Features](#-features) · [Commands](#-commands) · [Moderation](#-z-bot-moderation) · [Setup](#-setup) · [Environment](#-environment-variables) · [Deploy](#-deployment)
 
 </div>
 
@@ -25,388 +24,191 @@
 ## ✨ Features
 
 | Category | Details |
-|----------|---------|
-| 🔍 **URL Scanning** | VirusTotal + Google Safe Browsing + URLScan.io — একসাথে concurrent scan |
-| 🤖 **AI Analysis** | OpenAI/OpenRouter দিয়ে automated risk assessment |
-| 📸 **Screenshot** | Microlink (fullPage) + thum.io fallback |
-| 🧬 **DNS Lookup** | A, MX, NS, TXT records via Google DNS API |
-| 📋 **WHOIS** | Registrar, creation/expiry date, country |
-| 🖥️ **IP Check** | Reverse DNS + ipinfo.io geo + organization |
-| 🔒 **Headers Audit** | HSTS, CSP, X-Frame-Options, X-Content-Type — A–F grade |
-| 🐙 **GitHub Review** | AI-powered code security review from raw URLs |
-| 🤖 **AI Expert** | যেকোনো cybersecurity question এ answer |
-| 🔄 **Auto-Scan** | Group এ link paste করলে automatic scan |
-| ⚡ **API Rotation** | Multiple VT/Google/URLScan keys — quota spread |
-| 🛑 **Rate Limiting** | Per-user sliding window (5 req/60s) |
-| 🧠 **Smart Skip** | Trusted domains (YouTube, Google, etc.) skip হয় |
-| 📊 **Risk Scoring** | 0–100% aggregate score with contextual flags |
-| 🧵 **Thread Safe** | Locks for Flask threaded mode — race-condition free |
-| ✂️ **Message Split** | Auto-splits long reports to fit Telegram's 4096 limit |
+|-----------|---------|
+| 🔍 URL Threat Scan | VirusTotal + Google Safe Browsing + URLScan.io sandbox |
+| 📸 Screenshot | Auto website screenshot via Microlink & thum.io |
+| 🌐 DNS Lookup | A, MX, NS, TXT record resolution |
+| 📋 WHOIS | Registrar, creation date, expiry, country |
+| 🖥️ IP Check | Hostname, PTR record, org, country via ipinfo.io |
+| 🔒 Security Headers | HTTP header audit with A–F grade |
+| 🐙 GitHub Code Review | AI-powered security review of any raw GitHub file |
+| 🤖 AI Expert | Cybersecurity Q&A powered by OpenAI |
+| 🚨 Group Auto-Scan | Automatic link scanning in group chats |
+| 🛡️ Anti-Spam (Z Bot) | Keyword scoring + unicode bypass detection + domain blacklist |
+| ⚠️ Warning System | Auto-warn + auto-ban after configurable limit |
+| 🔑 Multi-API Rotation | Google & URLScan keys rotated to spread quota |
 
 ---
 
-## 🎮 Commands
+## 💬 Commands
 
-```
-/start          — Welcome message + command list
-/check <url>    — Full multi-engine threat scan
-/scan <url>     — Alias for /check
-/dns <domain>   — DNS record lookup
-/whois <domain> — WHOIS registration info
-/ip <address>   — IP reputation & geo check
-/headers <url>  — HTTP security headers audit
-/github <url>   — AI code security review
-/ask <question> — AI cybersecurity expert Q&A
-/ping           — Bot latency check
-/stats          — Total scans & threats found
-/help           — Detailed help menu
-```
+### 🔍 Threat & Scan
+| Command | Description |
+|---------|-------------|
+| `/check <url>` | Full URL threat scan (VT + Google SB + Sandbox + AI) |
+| `/scan <url>` | Alias for `/check` |
 
-> 💡 **Group এ যেকোনো link পাঠালে auto-scan হবে — কোনো command লাগবে না!**
+### 🌐 Network Tools
+| Command | Description |
+|---------|-------------|
+| `/dns <domain>` | DNS record lookup (A, MX, NS, TXT) |
+| `/whois <domain>` | WHOIS info — registrar, dates, country |
+| `/ip <address>` | IP hostname + org + country check |
+| `/headers <url>` | HTTP security headers audit (A–F grade) |
+
+### 🤖 AI Tools
+| Command | Description |
+|---------|-------------|
+| `/ask <question>` | Ask AI cybersecurity expert |
+| `/github <raw_url>` | AI-powered code security review |
+
+### 📊 General
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message & command list |
+| `/help` | Full help menu |
+| `/ping` | Bot latency check |
+| `/stats` | Total scans & threats detected |
 
 ---
 
-## 🖼️ How It Looks
+## 🛡️ Z Bot Moderation
 
-### Scan Flow
+CyberGuard Pro includes a powerful built-in moderation module (**Z Bot**) for Telegram group management.
+
+### How It Works
+Every message in the group goes through a multi-layer detection pipeline:
+
 ```
-User sends link
-       ↓
-🛡️ CyberGuard Scanning...
-━━━━━━━━━━━━━━━━━━━━━
-🔍 Resolving Infrastructure...
-🧬 VirusTotal Multi-Engine Scan...
-🛰️ Google Safe Browsing Check...
-🧪 Sandbox Detonation...
-📸 Capturing Screenshot...
-🤖 AI Risk Correlation...
-📊 Compiling Final Report...
-━━━━━━━━━━━━━━━━━━━━━
-       ↓
-📸 Screenshot + 📊 Full Report + 🔗 VT Link
+Message → Unicode Normalizer → Keyword Scorer → Domain Checker → Verdict → Action
 ```
 
-### Risk Verdicts
+### Scoring System
 | Score | Verdict | Action |
 |-------|---------|--------|
-| 0–20% | 🟢 **SAFE** | No threats detected |
-| 21–59% | 🟡 **SUSPICIOUS** | Use isolated environment |
-| 60–100% | 🔴 **HIGH RISK** | Avoid & escalate immediately |
+| 0–39 | 🟢 SAFE | No action |
+| 40–69 | 🟡 SUSPICIOUS | Warning issued |
+| 70–99 | 🟠 HIGH RISK | Message deleted + warning |
+| 100+ | 🔴 DANGER | Message deleted + warning |
+
+After **3 warnings** → user is **automatically banned**.
+
+### Bypass Detection
+Z Bot normalizes Unicode tricks spammers use to evade filters:
+- Cyrillic/Greek lookalike characters (e.g. `ѕex` → `sex`)
+- Invisible/zero-width characters
+- Emoji flag encoding (e.g. 🇸🇪🇽 → `sex`)
+- Fancy math/bold fonts
+
+### Admin Commands
+| Command | Description |
+|---------|-------------|
+| `/zban` | Ban a user |
+| `/zunban` | Unban a user |
+| `/zmute` | Mute a user |
+| `/zunmute` | Unmute a user |
+| `/zwarn` | Manually warn a user |
+| `/warnings` | View warnings for a user |
+| `/clearwarnings` | Clear all warnings for a user |
+| `/rules` | Show group rules |
+
+### Creator-Only Commands
+| Command | Description |
+|---------|-------------|
+| `/zlogs` | Last 10 spam detections |
+| `/zdebug <text>` | Test normalizer + scorer live |
+| `/zstats` | Global bot statistics |
+| `/zblacklist` | View/add/remove blacklisted domains |
+| `/zwhitelist` | View/add/remove whitelisted domains |
+| `/zmaintenance` | Toggle maintenance mode |
+| `/zupdate` | Show bot version info |
 
 ---
 
-## 🚀 Setup
+## ⚙️ Setup
 
-### 1. Clone Repository
-```bash
-git clone https://github.com/YOUR_USERNAME/CyberGuard-Pro.git
-cd CyberGuard-Pro
-```
+### Prerequisites
+- Python 3.11+
+- A Telegram Bot Token from [@BotFather](https://t.me/BotFather)
+- Render account (for hosting)
+- Cloudflare Worker (for webhook)
 
-### 2. Install Dependencies
+### Installation
+
 ```bash
+git clone https://github.com/shihab81x/cyberguard-bot.git
+cd cyberguard-bot
 pip install -r requirements.txt
-```
-
-### 3. Configure Environment
-```bash
-cp .env.example .env
-# Edit .env with your API keys
-```
-
-### 4. Run Locally (Polling Mode)
-```bash
-python bot.py
+python bot-2-1.py
 ```
 
 ---
 
-## 🔑 Environment Variables
+## 🔐 Environment Variables
 
-### Required
-| Variable | Description | Get It |
-|----------|-------------|--------|
-| `BOT_TOKEN` | Telegram Bot Token | [@BotFather](https://t.me/BotFather) |
-| `VT_KEY` | VirusTotal API Key | [virustotal.com](https://www.virustotal.com/gui/my-apikey) |
-| `OPENAI_KEY` | OpenAI/OpenRouter API Key | [openrouter.ai](https://openrouter.ai/keys) |
+Set these in your Render dashboard or `.env` file:
 
-### Optional (Webhook Mode)
-| Variable | Description |
-|----------|-------------|
-| `WORKER_URL` | Your Cloudflare Worker URL (e.g., `https://worker.domain.com`) |
-| `WORKER_SECRET` | Secret token for webhook verification |
-
-### Optional (API Rotation — Quota Spread)
-| Variable | Description |
-|----------|-------------|
-| `GOOGLE_KEY1` | Google Safe Browsing API Key #1 |
-| `GOOGLE_KEY2` | Google Safe Browsing API Key #2 |
-| `URLSCAN_KEY1` | URLScan.io API Key #1 |
-| `URLSCAN_KEY2` | URLScan.io API Key #2 |
-
-### Optional (AI Customization)
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `OPENAI_BASE` | `https://openrouter.ai/api/v1` | Custom API endpoint |
-| `OPENAI_MODEL` | `openai/gpt-oss-120b:free` | Model to use |
-
-### Optional (Server)
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `PORT` | `8080` | Flask listen port |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `BOT_TOKEN` | ✅ | Telegram bot token from @BotFather |
+| `CREATOR_ID` | ✅ | Your Telegram user ID (for creator-only commands) |
+| `VT_KEY` | ✅ | VirusTotal API key |
+| `GOOGLE_KEY1` | ✅ | Google Safe Browsing API key 1 |
+| `GOOGLE_KEY2` | ⬜ | Google Safe Browsing API key 2 (rotation) |
+| `URLSCAN_KEY1` | ✅ | URLScan.io API key 1 |
+| `URLSCAN_KEY2` | ⬜ | URLScan.io API key 2 (rotation) |
+| `OPENAI_KEY` | ⬜ | OpenAI API key (for AI features) |
+| `WORKER_URL` | ⬜ | Cloudflare Worker webhook URL |
+| `WORKER_SECRET` | ⬜ | Secret token for webhook verification |
+| `ZBOT_DB` | ⬜ | SQLite DB path (default: `zbot.db`) |
+| `WARN_LIMIT` | ⬜ | Warnings before auto-ban (default: `3`) |
+| `PORT` | ⬜ | Flask server port (default: `8080`) |
 
 ---
 
-## 🏗️ Architecture
+## 🚀 Deployment
+
+### Render (Recommended)
+
+1. Fork this repository
+2. Create a new **Web Service** on [Render](https://render.com)
+3. Connect your GitHub repo
+4. Set all environment variables in the Render dashboard
+5. Set **Start Command**:
+   ```
+   python bot-2-1.py
+   ```
+6. Deploy!
+
+### Cloudflare Worker (Webhook Mode)
+
+Set `WORKER_URL` and `WORKER_SECRET` environment variables to enable webhook mode instead of polling. The bot will automatically register the webhook on startup.
+
+---
+
+## 🗂️ Project Structure
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                   CLOUDFLARE WORKER                      │
-│  (Reverse proxy → Telegram webhook → Render backend)     │
-└─────────────────────┬───────────────────────────────────┘
-                      │ HTTPS POST /telegram
-                      ▼
-┌─────────────────────────────────────────────────────────┐
-│              RENDER (Flask + python-telegram-bot)        │
-│                                                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────────┐   │
-│  │  Flask   │──│ asyncio  │──│  PTB Application     │   │
-│  │ Webhook  │  │ Event    │  │  (Handlers + Scan)   │   │
-│  │ Receiver │  │ Loop     │  │                      │   │
-│  └──────────┘  └──────────┘  └──────────┬───────────┘   │
-│                                           │              │
-│                    ┌──────────────────────┼──────────┐   │
-│                    │         SCAN PIPELINE          │   │
-│                    │  ┌─────┐ ┌─────┐ ┌─────────┐  │   │
-│                    │  │ VT  │ │ GSB │ │URLScan  │  │   │
-│                    │  └──┬──┘ └──┬──┘ └────┬────┘  │   │
-│                    │     │       │         │       │   │
-│                    │  ┌──▼───────▼─────────▼────┐  │   │
-│                    │  │   Risk Scoring (0-100)  │  │   │
-│                    │  └──────────┬──────────────┘  │   │
-│                    │  ┌──────────▼──────────────┐  │   │
-│                    │  │   AI Insight (OpenAI)   │  │   │
-│                    │  └──────────┬──────────────┘  │   │
-│                    │  ┌──────────▼──────────────┐  │   │
-│                    │  │  Screenshot + Report    │  │   │
-│                    │  └─────────────────────────┘  │   │
-│                    └───────────────────────────────┘   │
-└─────────────────────────────────────────────────────────┘
-                      │
-        ┌─────────────┼─────────────┐
-        ▼             ▼             ▼
-   ┌─────────┐  ┌──────────┐  ┌──────────┐
-   │VirusTotal│  │ Google SB │  │ URLScan  │
-   │  API    │  │   API     │  │   API    │
-   └─────────┘  └──────────┘  └──────────┘
-        │             │             │
-        ▼             ▼             ▼
-   ┌─────────┐  ┌──────────┐  ┌──────────┐
-   │ Microlink│  │  thum.io │  │ OpenAI/  │
-   │Screenshot│  │ (fallback)│  │ OpenRouter│
-   └─────────┘  └──────────┘  └──────────┘
+cyberguard-bot/
+├── bot-2-1.py        # Main bot — CyberGuard Pro
+├── zbot.py           # Z Bot moderation module
+├── requirements.txt  # Python dependencies
+├── Procfile          # Render process file
+└── README.md         # This file
 ```
 
 ---
 
-## 🌐 Deployment
+## 📜 License
 
-### Option A: Render + Cloudflare Worker (Recommended)
-
-**Why?** Free tier, no polling overhead, instant webhook delivery.
-
-#### Step 1: Cloudflare Worker
-```javascript
-// worker.js
-export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    
-    if (url.pathname === '/telegram' && request.method === 'POST') {
-      const resp = await fetch('https://YOUR_RENDER_APP.onrender.com/telegram', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-Worker-Secret': env.WORKER_SECRET,
-        },
-        body: request.body,
-      });
-      return new Response(resp.body, { status: resp.status });
-    }
-    
-    if (url.pathname === '/') {
-      return new Response('🛡️ CyberGuard Worker — Active', { status: 200 });
-    }
-    
-    return new Response('Not Found', { status: 404 });
-  },
-};
-```
-
-#### Step 2: Render Web Service
-```bash
-# In Render dashboard, set environment variables:
-BOT_TOKEN=your_bot_token
-VT_KEY=your_vt_key
-OPENAI_KEY=your_openai_key
-WORKER_URL=https://your-worker.your-subdomain.workers.dev
-WORKER_SECRET=a_random_secret_string
-PORT=8080
-
-# Build Command:
-pip install -r requirements.txt
-
-# Start Command:
-python bot.py
-```
-
-#### Step 3: Set Webhook
-Bot automatically sets webhook on startup if `WORKER_URL` is configured.
-
----
-
-### Option B: Render Only (Polling Mode)
-
-```bash
-# Set these env vars (NO WORKER_URL):
-BOT_TOKEN=your_bot_token
-VT_KEY=your_vt_key
-OPENAI_KEY=your_openai_key
-PORT=8080
-```
-
-> ⚠️ Polling mode uses more RAM and has higher latency. Webhook mode is recommended.
-
----
-
-## 📦 Requirements
-
-```
-python-telegram-bot>=21.0
-flask>=3.0
-httpx>=0.27
-```
-
-<details>
-<summary>📦 Full requirements.txt</summary>
-
-```
-python-telegram-bot==21.7
-flask==3.0.3
-httpx==0.27.2
-```
-
-</details>
-
----
-
-## 🧠 Smart Features
-
-### Trusted Domain Skip
-These domains are never scanned (exact + subdomain match):
-```
-youtube.com · google.com · github.com · facebook.com
-instagram.com · twitter.com · linkedin.com · netflix.com
-...and 20+ more
-```
-
-### Group-Internal Link Skip
-Messaging platform links skip scan automatically:
-```
-t.me · wa.me · discord.gg · telegram.me ...
-```
-
-### Risky TLD Detection
-```
-.site · .xyz · .top · .online · .club · .tk · .ml · .cf ...
-```
-
-### Suspicious Keyword Boost
-```
-"free-money" · "login-verify" · "account-suspend" · "claim-now" ...
-```
-
-### Rate Limiting
-- **5 requests per user per 60 seconds**
-- Sliding window algorithm
-- Auto-cleanup of stale users every 5 minutes
-
-### Message Splitting
-Long reports automatically split at:
-- Newline boundaries (preferred)
-- Code fence boundaries (``` balance check)
-- Hard character limit fallback
-
----
-
-## 🛡️ Security
-
-| Feature | Implementation |
-|---------|---------------|
-| Webhook Verification | `X-Worker-Secret` header check |
-| Rate Limiting | Per-user sliding window |
-| Input Validation | Regex-based URL + domain validation |
-| TLD Whitelist | Only known TLDs accepted |
-| Thread Safety | `threading.Lock` on shared state |
-| Memory Safety | Rate dict auto-cleanup |
-| File Size Limit | GitHub review capped at 50KB |
-| No Persistent Storage | In-memory only, no DB leaks |
-
----
-
-## 📊 Stats Example
-
-```
-📊 CyberGuard Stats
-━━━━━━━━━━━━━━━━━━━━━
-🔍 Total Scans:   1,247
-🚨 Threats Found: 89
-⏱️ Uptime:        168h
-━━━━━━━━━━━━━━━━━━━━━
-```
-
----
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing`)
-5. Open a Pull Request
-
----
-
-## ⚖️ License
-
-This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙏 Credits
-
-| Service | Purpose |
-|---------|---------|
-| [VirusTotal](https://virustotal.com) | Multi-engine malware scanning |
-| [Google Safe Browsing](https://safebrowsing.google.com) | Threat URL matching |
-| [URLScan.io](https://urlscan.io) | Sandbox detonation + screenshots |
-| [Microlink](https://microlink.io) | Full-page screenshots |
-| [thum.io](https://thum.io) | Screenshot fallback |
-| [OpenRouter](https://openrouter.ai) | AI model routing |
-| [ipinfo.io](https://ipinfo.io) | IP geolocation |
-| [Google DNS](https://dns.google) | DNS resolution |
-| [whoisjson.com](https://whoisjson.com) | WHOIS data |
+MIT License — free to use, modify, and distribute.
 
 ---
 
 <div align="center">
 
-**Made with 🔥 for the cybersecurity community**
+**🤖 Try it now → [@CyberGuardAnalyzer_bot](https://t.me/CyberGuardAnalyzer_bot)**
 
-🛡️ *CyberGuard Pro* — *Your group's digital shield*
+⚡ Built with Python · python-telegram-bot · Flask · VirusTotal · Google Safe Browsing · URLScan.io · OpenAI
 
 </div>
-```
-
----
-
