@@ -26,6 +26,35 @@ DB_PATH      = os.environ.get("ZBOT_DB", "zbot.db")
 WARN_LIMIT   = int(os.environ.get("WARN_LIMIT", "3"))   # auto-ban after N warnings
 _maintenance = False
 
+# Welcome GIF — shown to every new group member
+WELCOME_GIF  = os.environ.get("WELCOME_GIF", "https://i.ibb.co.com/Dfn12kC8/giphy.gif")
+
+# ══════════════════════════════════════════════════════════
+#  FRAKTUR FONT (𝔚𝔢𝔩𝔠𝔬𝔪𝔢 style) — for fancy welcome message
+# ══════════════════════════════════════════════════════════
+_FRACTUR = {
+    'A': '𝔄', 'B': '𝔅', 'C': 'ℭ', 'D': '𝔇', 'E': '𝔈', 'F': '𝔉',
+    'G': '𝔊', 'H': 'ℌ', 'I': '𝔍', 'J': '𝔍', 'K': '𝔎', 'L': '𝔏',
+    'M': '𝔐', 'N': '𝔑', 'O': '𝔒', 'P': '𝔓', 'Q': '𝔔', 'R': 'ℜ',
+    'S': '𝔖', 'T': '𝔗', 'U': '𝔘', 'V': '𝔙', 'W': '𝔚', 'X': '𝔛',
+    'Y': '𝔜', 'Z': 'ℨ',
+    'a': '𝔞', 'b': '𝔟', 'c': '𝔠', 'd': '𝔡', 'e': '𝔢', 'f': '𝔣',
+    'g': '𝔤', 'h': '𝔥', 'i': '𝔦', 'j': '𝔧', 'k': '𝔨', 'l': '𝔩',
+    'm': '𝔪', 'n': '𝔫', 'o': '𝔬', 'p': '𝔭', 'q': '𝔮', 'r': '𝔯',
+    's': '𝔰', 't': '𝔱', 'u': '𝔲', 'v': '𝔳', 'w': '𝔴', 'x': '𝔵',
+    'y': '𝔶', 'z': '𝔷',
+    '0': '𝟎', '1': '𝟏', '2': '𝟐', '3': '𝟑', '4': '𝟒',
+    '5': '𝟓', '6': '𝟔', '7': '𝟕', '8': '𝟖', '9': '𝟗',
+    ' ': ' ', '!': '!', '?': '?', '.': '.', ',': ',',
+    ':': ':', '-': '-', '/': '/', '@': '@', '(': '(', ')': ')',
+    "'": "'", '"': '"',
+}
+
+def _to_fractur(text: str) -> str:
+    """Convert Latin letters/digits to Fraktur (𝔚𝔢𝔩𝔠𝔬𝔪𝔢) Unicode font.
+    Emoji & non-Latin chars pass through unchanged."""
+    return ''.join(_FRACTUR.get(c, c) for c in text)
+
 # ══════════════════════════════════════════════════════════
 #  DATABASE — Phase 10
 # ══════════════════════════════════════════════════════════
@@ -643,7 +672,7 @@ async def cmd_clearwarnings(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
     )
 
 # ══════════════════════════════════════════════════════════
-#  PHASE 2 — RULES SYSTEM
+#  PHASE 2 — RULES SYSTEM  (admin can edit via Telegram)
 # ══════════════════════════════════════════════════════════
 _DEFAULT_RULES = (
     "📋 *Group Rules*\n"
@@ -660,11 +689,10 @@ _DEFAULT_RULES = (
 )
 
 async def cmd_rules(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """/rules — Group rules দেখাও। Owner username auto-fetch হয়।"""
+    """/rules — Show group rules (custom or default)."""
     chat_id  = u.effective_chat.id
     settings = _get_settings(chat_id)
 
-    # Owner username cache না থাকলে auto-fetch করো
     owner_username = settings.get("owner_username")
     if not owner_username:
         _, owner_username = await _get_owner(ctx, chat_id)
@@ -673,8 +701,102 @@ async def cmd_rules(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
 
     owner_mention = f"@{owner_username}" if owner_username else "Admin"
     custom_rules  = settings.get("rules")
-    text = custom_rules if custom_rules else _DEFAULT_RULES.format(owner=owner_mention)
+
+    if custom_rules:
+        text = (
+            "📋 *Group Rules*\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            f"{custom_rules}\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "⚡ _Admin can update anytime with_ `/setrules`"
+        )
+    else:
+        text = _DEFAULT_RULES.format(owner=owner_mention)
     await u.message.reply_text(text, parse_mode="Markdown")
+
+async def cmd_setrules(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/setrules <text> — Admin sets custom group rules via Telegram."""
+    if not await _is_admin(ctx, u.effective_chat.id, u.effective_user.id):
+        await u.message.reply_text("❌ Only admins can set rules.", parse_mode="Markdown")
+        return
+
+    rules_text = re.sub(r"^/setrules(@\w+)?\s*", "", u.message.text or "").strip()
+    if not rules_text:
+        await u.message.reply_text(
+            "❗ *Usage:* `/setrules <your rules text>`\n\n"
+            "💡 Use line breaks for multiple rules.\n"
+            "💡 `/resetrules` দিয়ে default এ ফিরে যেতে পারবেন।\n\n"
+            "*Example:*\n"
+            "`/setrules `\n"
+            "1. No spam\n"
+            "2. Respect everyone\n"
+            "3. Use English",
+            parse_mode="Markdown",
+        )
+        return
+
+    _set_settings(u.effective_chat.id, rules=rules_text)
+    await u.message.reply_text(
+        "✅ *Rules Updated!*\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        f"📏 *New Rules:*\n{rules_text}\n"
+        "━━━━━━━━━━━━━━━━━━━━━\n"
+        "💡 Members can view via `/rules`",
+        parse_mode="Markdown",
+    )
+
+async def cmd_resetrules(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """/resetrules — Admin: reset rules to built-in default."""
+    if not await _is_admin(ctx, u.effective_chat.id, u.effective_user.id):
+        await u.message.reply_text("❌ Only admins can reset rules.", parse_mode="Markdown")
+        return
+
+    _set_settings(u.effective_chat.id, rules=None)
+    await u.message.reply_text(
+        "✅ Rules reset to default.\n"
+        "💡 Use `/rules` to preview.",
+        parse_mode="Markdown",
+    )
+
+# ══════════════════════════════════════════════════════════
+#  PHASE 11 — WELCOME MESSAGE  (Fraktur font + GIF)
+# ══════════════════════════════════════════════════════════
+async def handle_new_members(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    """Send fancy welcome message (Fraktur font + GIF) when new members join."""
+    if not u.message or not u.message.new_chat_members:
+        return
+
+    for member in u.message.new_chat_members:
+        # Skip bots (including this bot itself)
+        if member.is_bot:
+            continue
+
+        display_name = member.full_name or member.first_name or _to_fractur("Unknown")
+        username     = f"@{member.username}" if member.username else _to_fractur("no username")
+        user_id      = member.id
+
+        caption = (
+            f"🤗 {_to_fractur('Welcome to the group')}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"👤 {_to_fractur('Display Name: ')}{display_name}\n"
+            f"💬 {_to_fractur('Username: ')}{username}\n"
+            f"🆔 {_to_fractur('Telegram ID: ')}{user_id}\n"
+            f"━━━━━━━━━━━━━━━━━━━━━\n"
+            f"📚 {_to_fractur('Please read /rules before chatting. Welcome')} 🎉"
+        )
+
+        # Send GIF + caption first
+        try:
+            await u.message.reply_animation(
+                animation=WELCOME_GIF,
+                caption=caption,
+            )
+        except Exception as e:
+            logger.warning(f"Welcome GIF failed, falling back to text: {e}")
+            try:
+                await u.message.reply_text(caption)
+            except Exception as e2:
+                logger.error(f"Welcome text also failed: {e2}")
 
 # ══════════════════════════════════════════════════════════
 #  PHASE 7 + 8 — AUTO ACTION + NOTIFICATION
@@ -1046,6 +1168,13 @@ def register_handlers(app) -> None:
     app.add_handler(CommandHandler("warnings",      cmd_warnings))
     app.add_handler(CommandHandler("clearwarnings", cmd_clearwarnings))
     app.add_handler(CommandHandler("rules",         cmd_rules))
+    app.add_handler(CommandHandler("setrules",      cmd_setrules))
+    app.add_handler(CommandHandler("resetrules",    cmd_resetrules))
+    # ── Welcome message on new members ──
+    app.add_handler(MessageHandler(
+        filters.StatusUpdate.NEW_CHAT_MEMBERS,
+        handle_new_members,
+    ))
     # ── Creator only ──
     app.add_handler(CommandHandler("zlogs",         cmd_zlogs))
     app.add_handler(CommandHandler("zdebug",        cmd_zdebug))
