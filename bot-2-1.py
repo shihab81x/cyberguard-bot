@@ -711,7 +711,7 @@ async def cmd_start(u: Update, _):
         "• `/whois <domain>` — WHOIS info\n"
         "• `/ip <address>` — IP check\n"
         "• `/headers <url>` — Security headers\n"
-        "• `/github <url>` — AI code review\n"
+        "• `/github ` —  /github + View source code repository & main files\n"
         "• `/ask <question>` — AI expert\n"
         "• `/ping` — Latency check\n"
         "• `/stats` — Scan statistics\n\n"
