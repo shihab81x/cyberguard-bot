@@ -711,8 +711,9 @@ async def cmd_start(u: Update, _):
         "• `/whois <domain>` — WHOIS info\n"
         "• `/ip <address>` — IP check\n"
         "• `/headers <url>` — Security headers\n"
-        "• `/github ` —  /github + View source code repository & main files\n"
+        "• `/github` — View source code repo\n"
         "• `/ask <question>` — AI expert\n"
+        "• `/setrules <text>` — Admin: edit group rules\n"
         "• `/ping` — Latency check\n"
         "• `/stats` — Scan statistics\n\n"
         "💡 *Group এ যেকোনো link পাঠালে auto-scan হবে!*\n"
@@ -738,6 +739,12 @@ async def cmd_help(u: Update, _):
         "HTTP security headers audit (A–F grade)\n\n"
         "🐙 `/github`\n"
         "Get this bot's source from GitHub\n\n"
+        "📋 `/rules`\n"
+        "Show group rules (custom or default)\n\n"
+        "✏️ `/setrules <text>`\n"
+        "Admin: set custom group rules via Telegram\n\n"
+        "🔄 `/resetrules`\n"
+        "Admin: reset rules to default\n\n"
         "🤖 `/ask <question>`\n"
         "AI cybersecurity Q&A\n\n"
         "🏓 `/ping` — Response latency\n"
@@ -955,6 +962,12 @@ async def handle_callback(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
             "HTTP security headers audit (A–F grade)\n\n"
             "🐙 `/github`\n"
             "Get this bot's source from GitHub\n\n"
+            "📋 `/rules`\n"
+            "Show group rules\n\n"
+            "✏️ `/setrules <text>`\n"
+            "Admin: edit rules\n\n"
+            "🔄 `/resetrules`\n"
+            "Admin: reset rules\n\n"
             "🤖 `/ask <question>`\n"
             "AI cybersecurity Q&A\n\n"
             "🏓 `/ping` — Response latency\n"
@@ -991,7 +1004,9 @@ _COMMANDS = [
     BotCommand("ip",      "IP reputation check"),
     BotCommand("headers", "HTTP security headers"),
     BotCommand("ask",     "Ask AI security expert"),
-    BotCommand("github",  "AI code review from GitHub"),
+    BotCommand("github",  "View source code repository"),
+    BotCommand("setrules",    "Admin: set group rules via Telegram"),
+    BotCommand("resetrules",  "Admin: reset rules to default"),
     BotCommand("ping",    "Bot latency check"),
     BotCommand("stats",   "Scan statistics"),
     BotCommand("help",    "Help menu"),
