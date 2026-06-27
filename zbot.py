@@ -27,7 +27,11 @@ WARN_LIMIT   = int(os.environ.get("WARN_LIMIT", "3"))   # auto-ban after N warni
 _maintenance = False
 
 # Welcome GIF — shown to every new group member
-WELCOME_GIF  = os.environ.get("WELCOME_GIF", "https://i.ibb.co.com/Dfn12kC8/giphy.gif")
+# IMPORTANT: এটা অবশ্যই সত্যিকারের ANIMATED GIF হতে হবে (static image না)।
+# imgbb এর direct CDN domain হলো `i.ibb.co` (`.com` extra নেই)।
+# সঠিক URL পেতে: imgbb তে upload → Direct Link কপি করো।
+# অথবা Telegram-এ যেকোনো GIF কে bot-এ পাঠাও, file_id পাবে — সেটাও use করা যায়।
+WELCOME_GIF  = os.environ.get("WELCOME_GIF", "https://i.ibb.co/Dfn12kC8/giphy.gif")
 
 # ══════════════════════════════════════════════════════════
 #  FRAKTUR FONT (𝔚𝔢𝔩𝔠𝔬𝔪𝔢 style) — for fancy welcome message
@@ -761,8 +765,23 @@ async def cmd_resetrules(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
 # ══════════════════════════════════════════════════════════
 #  PHASE 11 — WELCOME MESSAGE  (Fraktur font + GIF)
 # ══════════════════════════════════════════════════════════
+def _escape_html(text: str) -> str:
+    """HTML special chars escape করো — Telegram HTML parse mode-এ user input
+    safely render করার জন্য। Markdown-এ `_`/`*`/`[` ইত্যাদি ভাঙে।"""
+    return (
+        text.replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+    )
+
 async def handle_new_members(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
-    """Send fancy welcome message (Fraktur font + GIF) when new members join."""
+    """
+    Send welcome message when new members join the group.
+    ৩-স্তর fallback:
+      1) Animated GIF (reply_animation)
+      2) Static image (reply_photo — URL টা animated না হলে)
+      3) Plain text (last resort)
+    """
     if not u.message or not u.message.new_chat_members:
         return
 
@@ -771,32 +790,58 @@ async def handle_new_members(u: Update, ctx: ContextTypes.DEFAULT_TYPE):
         if member.is_bot:
             continue
 
-        display_name = member.full_name or member.first_name or _to_fractur("Unknown")
-        username     = f"@{member.username}" if member.username else _to_fractur("no username")
+        display_name = member.full_name or member.first_name or "Unknown"
+        username     = f"@{member.username}" if member.username else "no username"
         user_id      = member.id
 
+        # ── Build caption (HTML mode — user name safe) ──
         caption = (
-            f"🤗 {_to_fractur('Welcome to the group')}\n"
+            f"🤗 <b>Welcome to the group</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 {_to_fractur('Display Name: ')}{display_name}\n"
-            f"💬 {_to_fractur('Username: ')}{username}\n"
-            f"🆔 {_to_fractur('Telegram ID: ')}{user_id}\n"
+            f"👤 <b>Display Name:</b> {_escape_html(display_name)}\n"
+            f"💬 <b>Username:</b> {_escape_html(username)}\n"
+            f"🆔 <b>Telegram ID:</b> <code>{user_id}</code>\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"📚 {_to_fractur('Please read /rules before chatting. Welcome')} 🎉"
+            f"📚 Please read /rules before chatting. Welcome 🎉"
         )
 
-        # Send GIF + caption first
+        # ── Strategy 1: animated GIF ──
         try:
             await u.message.reply_animation(
                 animation=WELCOME_GIF,
                 caption=caption,
+                parse_mode="HTML",
             )
+            logger.info(f"Welcome ✅ animated GIF sent → {display_name} ({user_id})")
+            return
         except Exception as e:
-            logger.warning(f"Welcome GIF failed, falling back to text: {e}")
+            logger.warning(f"Welcome GIF failed for {user_id}: {e}")
+
+        # ── Strategy 2: static image (URL-এ .gif কিন্তু content static হলে) ──
+        try:
+            await u.message.reply_photo(
+                photo=WELCOME_GIF,
+                caption=caption,
+                parse_mode="HTML",
+            )
+            logger.info(f"Welcome ✅ static image sent → {display_name} ({user_id})")
+            return
+        except Exception as e:
+            logger.warning(f"Welcome photo also failed for {user_id}: {e}")
+
+        # ── Strategy 3: text-only fallback ──
+        try:
+            await u.message.reply_text(caption, parse_mode="HTML")
+            logger.info(f"Welcome ✅ text-only sent → {display_name} ({user_id})")
+        except Exception as e:
+            logger.error(f"Welcome text fallback ALSO failed for {user_id}: {e}")
+            # Final last resort — minimal, no parse mode
             try:
-                await u.message.reply_text(caption)
+                await u.message.reply_text(
+                    f"✅ Welcome, {display_name}! Read /rules please."
+                )
             except Exception as e2:
-                logger.error(f"Welcome text also failed: {e2}")
+                logger.error(f"Welcome final fallback dead for {user_id}: {e2}")
 
 # ══════════════════════════════════════════════════════════
 #  PHASE 7 + 8 — AUTO ACTION + NOTIFICATION
